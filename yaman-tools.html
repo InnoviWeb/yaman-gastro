@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yaman Gastro – Bestellung & Preise</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Instrument+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f0f0e;
+  --surface:#181817;
+  --surface2:#222220;
+  --border:#2a2a28;
+  --green:#22c55e;
+  --green-dim:#166534;
+  --gold:#d4a853;
+  --text:#f0ede8;
+  --muted:#6b6960;
+  --danger:#ef4444;
+}
+html{scroll-behavior:smooth}
+body{font-family:'Instrument Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* ── HEADER ── */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:1.2rem 2.5rem;
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:50;
+  background:rgba(15,15,14,0.92);backdrop-filter:blur(16px);
+}
+.logo{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;letter-spacing:-.02em}
+.logo span{color:var(--green)}
+.tabs{display:flex;gap:.3rem}
+.tab-btn{
+  padding:.55rem 1.3rem;border-radius:6px;border:1px solid transparent;
+  font-family:'Instrument Sans',sans-serif;font-size:.85rem;font-weight:500;
+  cursor:pointer;transition:all .2s;background:transparent;color:var(--muted);
+}
+.tab-btn.active{background:var(--surface2);border-color:var(--border);color:var(--text)}
+.tab-btn:hover:not(.active){color:var(--text)}
+
+/* ── VIEWS ── */
+.view{display:none;padding:2rem 2.5rem;max-width:960px;margin:0 auto;animation:fadeIn .3s ease}
+.view.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* ── SECTION HEADER ── */
+.view-title{font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:800;margin-bottom:.4rem}
+.view-sub{color:var(--muted);font-size:.9rem;margin-bottom:2rem}
+
+/* ══════════════════════════════
+   PREISLISTE
+══════════════════════════════ */
+.search-bar{
+  display:flex;align-items:center;gap:.8rem;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:.7rem 1.1rem;margin-bottom:1.2rem;
+}
+.search-bar input{
+  background:none;border:none;outline:none;color:var(--text);
+  font-family:'Instrument Sans',sans-serif;font-size:.95rem;width:100%;
+}
+.search-bar input::placeholder{color:var(--muted)}
+.search-icon{color:var(--muted);font-size:1rem;flex-shrink:0}
+
+.cat-filters{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.8rem}
+.cat-btn{
+  padding:.4rem 1rem;border-radius:20px;border:1px solid var(--border);
+  font-size:.8rem;font-weight:500;cursor:pointer;transition:all .2s;
+  background:transparent;color:var(--muted);font-family:'Instrument Sans',sans-serif;
+}
+.cat-btn.active{background:var(--green);border-color:var(--green);color:#000}
+.cat-btn:hover:not(.active){border-color:var(--text);color:var(--text)}
+
+.category-block{margin-bottom:2rem}
+.category-label{
+  font-family:'Syne',sans-serif;font-size:.7rem;font-weight:700;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--muted);
+  margin-bottom:.8rem;padding-bottom:.6rem;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:.6rem;
+}
+.category-label .cat-icon{font-size:1rem}
+
+.price-table{width:100%;border-collapse:collapse}
+.price-table tr{border-bottom:1px solid var(--border);transition:background .15s}
+.price-table tr:hover{background:var(--surface)}
+.price-table td{padding:.9rem .6rem;font-size:.9rem;vertical-align:middle}
+.price-table .col-name{font-weight:500;color:var(--text)}
+.price-table .col-unit{color:var(--muted);font-size:.8rem}
+.price-table .col-price{
+  text-align:right;font-family:'Syne',sans-serif;font-weight:700;
+  font-size:1rem;color:var(--gold);white-space:nowrap;
+}
+.price-table .col-add{text-align:right;width:36px}
+.add-btn{
+  width:30px;height:30px;border-radius:6px;border:1px solid var(--border);
+  background:transparent;color:var(--muted);cursor:pointer;font-size:1.1rem;
+  transition:all .2s;display:inline-flex;align-items:center;justify-content:center;
+}
+.add-btn:hover{background:var(--green);border-color:var(--green);color:#000}
+.badge-new{
+  display:inline-block;padding:.15rem .5rem;border-radius:4px;
+  background:rgba(212,168,83,.15);color:var(--gold);font-size:.7rem;font-weight:600;
+  margin-left:.5rem;letter-spacing:.04em;text-transform:uppercase;
+}
+.no-results{text-align:center;padding:3rem;color:var(--muted);font-size:.95rem}
+
+/* ══════════════════════════════
+   WARENKORB MINI
+══════════════════════════════ */
+.cart-bar{
+  position:fixed;bottom:1.5rem;right:1.5rem;z-index:100;
+  background:var(--green);color:#000;
+  border-radius:12px;padding:.9rem 1.4rem;
+  font-family:'Syne',sans-serif;font-weight:700;font-size:.9rem;
+  cursor:pointer;box-shadow:0 8px 32px rgba(34,197,94,.3);
+  transition:transform .2s,box-shadow .2s;
+  display:none;align-items:center;gap:.6rem;
+}
+.cart-bar:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(34,197,94,.4)}
+.cart-count{
+  background:#000;color:var(--green);
+  width:22px;height:22px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.75rem;
+}
+
+/* ══════════════════════════════
+   BESTELLFORMULAR
+══════════════════════════════ */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.form-group{display:flex;flex-direction:column;gap:.45rem;margin-bottom:1rem}
+.form-group.full{grid-column:1/-1}
+.form-group label{font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.form-group input,
+.form-group textarea,
+.form-group select{
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:.8rem 1rem;color:var(--text);font-family:'Instrument Sans',sans-serif;
+  font-size:.9rem;outline:none;transition:border-color .2s;
+}
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus{border-color:var(--green)}
+.form-group select option{background:var(--surface2)}
+.form-group textarea{min-height:80px;resize:vertical}
+
+/* Produkt-Zeilen im Formular */
+.order-items{margin-bottom:1.5rem}
+.order-item-row{
+  display:grid;grid-template-columns:1fr auto auto;gap:.7rem;
+  align-items:end;margin-bottom:.7rem;
+}
+.order-item-row .form-group{margin-bottom:0}
+.remove-item{
+  height:42px;width:42px;border-radius:8px;
+  border:1px solid var(--border);background:transparent;
+  color:var(--muted);cursor:pointer;font-size:1.1rem;
+  transition:all .2s;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;margin-bottom:0;
+}
+.remove-item:hover{border-color:var(--danger);color:var(--danger)}
+
+.add-item-btn{
+  display:flex;align-items:center;gap:.5rem;
+  background:transparent;border:1px dashed var(--border);
+  color:var(--muted);border-radius:8px;padding:.7rem 1rem;
+  font-family:'Instrument Sans',sans-serif;font-size:.85rem;
+  cursor:pointer;transition:all .2s;width:100%;margin-bottom:1.5rem;
+}
+.add-item-btn:hover{border-color:var(--green);color:var(--green)}
+
+.preview-box{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:10px;padding:1.2rem 1.4rem;margin-bottom:1.5rem;
+  font-size:.83rem;line-height:1.7;color:var(--muted);
+  font-family:monospace;white-space:pre-wrap;word-break:break-word;
+  max-height:200px;overflow-y:auto;
+}
+.preview-box strong{color:var(--text);font-family:'Syne',sans-serif}
+
+.wa-btn{
+  display:flex;align-items:center;justify-content:center;gap:.8rem;
+  width:100%;padding:1.1rem;border-radius:10px;border:none;
+  background:var(--green);color:#000;
+  font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;
+  cursor:pointer;transition:all .2s;letter-spacing:.02em;
+}
+.wa-btn:hover{background:#16a34a;transform:translateY(-1px);box-shadow:0 8px 24px rgba(34,197,94,.25)}
+.wa-btn svg{width:20px;height:20px}
+
+.section-divider{
+  border:none;border-top:1px solid var(--border);margin:1.8rem 0;
+}
+
+/* Warenkorb im Formular */
+.cart-preview{background:var(--surface2);border-radius:10px;padding:1.2rem;margin-bottom:1.5rem}
+.cart-preview-title{font-family:'Syne',sans-serif;font-size:.8rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.8rem}
+.cart-item-row{display:flex;align-items:center;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--border);font-size:.88rem}
+.cart-item-row:last-child{border-bottom:none}
+.cart-item-name{color:var(--text)}
+.cart-item-qty{color:var(--muted);font-size:.8rem;margin-left:.5rem}
+.cart-item-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem;padding:.2rem}
+.cart-item-remove:hover{color:var(--danger)}
+.cart-empty{color:var(--muted);font-size:.85rem;font-style:italic}
+
+@media(max-width:640px){
+  header{padding:1rem 1.2rem}
+  .view{padding:1.5rem 1.2rem}
+  .form-grid{grid-template-columns:1fr}
+  .order-item-row{grid-template-columns:1fr auto}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Yaman <span>Gastro</span></div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('preisliste')">📋 Preisliste</button>
+    <button class="tab-btn" onclick="switchTab('bestellen')">💬 Bestellen</button>
+  </div>
+</header>
+
+<!-- ══ PREISLISTE ══ -->
+<div class="view active" id="view-preisliste">
+  <div class="view-title">Preisliste</div>
+  <div class="view-sub">Aktuelle Großhandelspreise – Stand Mai 2025</div>
+
+  <div class="search-bar">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="searchInput" placeholder="Produkt suchen..." oninput="filterProducts()">
+  </div>
+
+  <div class="cat-filters" id="catFilters">
+    <button class="cat-btn active" onclick="setCat('alle',this)">Alle</button>
+    <button class="cat-btn" onclick="setCat('obst',this)">🥦 Obst & Gemüse</button>
+    <button class="cat-btn" onclick="setCat('tiefkuehl',this)">❄️ Tiefkühl</button>
+    <button class="cat-btn" onclick="setCat('gewuerze',this)">🌿 Gewürze</button>
+    <button class="cat-btn" onclick="setCat('getraenke',this)">🥤 Getränke</button>
+    <button class="cat-btn" onclick="setCat('weine',this)">🍷 Weine</button>
+    <button class="cat-btn" onclick="setCat('verpackung',this)">📦 Verpackung</button>
+  </div>
+
+  <div id="productList"></div>
+</div>
+
+<!-- ══ BESTELLFORMULAR ══ -->
+<div class="view" id="view-bestellen">
+  <div class="view-title">Bestellung aufgeben</div>
+  <div class="view-sub">Formular ausfüllen → direkt per WhatsApp senden</div>
+
+  <div class="form-grid">
+    <div class="form-group">
+      <label>Ihr Name / Betrieb</label>
+      <input type="text" id="f_name" placeholder="Restaurant Mustermann" oninput="updatePreview()">
+    </div>
+    <div class="form-group">
+      <label>Telefon (optional)</label>
+      <input type="tel" id="f_tel" placeholder="+49 ..." oninput="updatePreview()">
+    </div>
+    <div class="form-group">
+      <label>Lieferdatum gewünscht</label>
+      <input type="date" id="f_datum" oninput="updatePreview()">
+    </div>
+    <div class="form-group">
+      <label>Lieferart</label>
+      <select id="f_lieferart" onchange="updatePreview()">
+        <option value="Lieferung">🚚 Lieferung</option>
+        <option value="Abholung">🏪 Abholung</option>
+      </select>
+    </div>
+  </div>
+
+  <hr class="section-divider">
+  <div style="font-family:'Syne',sans-serif;font-size:.85rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem">Produkte</div>
+
+  <!-- Warenkorb aus Preisliste -->
+  <div class="cart-preview" id="cartPreview">
+    <div class="cart-preview-title">🛒 Aus Preisliste hinzugefügt</div>
+    <div id="cartItemsList"><div class="cart-empty">Noch keine Produkte aus der Preisliste hinzugefügt.</div></div>
+  </div>
+
+  <div class="order-items" id="orderItems"></div>
+  <button class="add-item-btn" onclick="addItemRow()">＋ Produkt manuell hinzufügen</button>
+
+  <div class="form-group">
+    <label>Anmerkungen</label>
+    <textarea id="f_note" placeholder="Besondere Wünsche, Allergien, etc." oninput="updatePreview()"></textarea>
+  </div>
+
+  <hr class="section-divider">
+
+  <div style="font-family:'Syne',sans-serif;font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:.6rem">Vorschau der WhatsApp-Nachricht</div>
+  <div class="preview-box" id="previewBox">Felder ausfüllen um Vorschau zu sehen...</div>
+
+  <button class="wa-btn" onclick="sendWhatsApp()">
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+    </svg>
+    Jetzt per WhatsApp bestellen
+  </button>
+</div>
+
+<!-- Warenkorb-Button (Preisliste → Bestellen) -->
+<div class="cart-bar" id="cartBar" onclick="goToOrder()">
+  <span>🛒 Zur Bestellung</span>
+  <span class="cart-count" id="cartCount">0</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+//  PRODUKTDATEN
+// ═══════════════════════════════════════
+const products = [
+  // Obst & Gemüse
+  {id:1, cat:'obst', icon:'🥦', name:'Brokkoli', unit:'kg', price:2.40},
+  {id:2, cat:'obst', icon:'🍅', name:'Tomaten (Rispentomaten)', unit:'kg', price:1.90},
+  {id:3, cat:'obst', icon:'🥕', name:'Karotten', unit:'5kg Sack', price:4.50},
+  {id:4, cat:'obst', icon:'🧅', name:'Zwiebeln (weiß)', unit:'10kg', price:7.80},
+  {id:5, cat:'obst', icon:'🥬', name:'Eisbergsalat', unit:'Stück', price:0.95},
+  {id:6, cat:'obst', icon:'🍋', name:'Zitronen', unit:'kg', price:2.20, new:true},
+  {id:7, cat:'obst', icon:'🫑', name:'Paprika (mix)', unit:'kg', price:3.10},
+  {id:8, cat:'obst', icon:'🍄', name:'Champignons', unit:'kg', price:4.20},
+  // Tiefkühl
+  {id:9, cat:'tiefkuehl', icon:'🍟', name:'Pommes Frites (9mm)', unit:'2.5kg', price:5.90},
+  {id:10, cat:'tiefkuehl', icon:'🦐', name:'Garnelen (küchenfertig)', unit:'kg', price:14.50},
+  {id:11, cat:'tiefkuehl', icon:'🫘', name:'Erbsen TK', unit:'2.5kg', price:4.20},
+  {id:12, cat:'tiefkuehl', icon:'🥩', name:'Dönerfleisch (Hähnchen)', unit:'10kg', price:38.00, new:true},
+  // Gewürze
+  {id:13, cat:'gewuerze', icon:'🌶️', name:'Paprikapulver (edelsüß)', unit:'500g', price:3.80},
+  {id:14, cat:'gewuerze', icon:'🧄', name:'Knoblauchpulver', unit:'500g', price:4.10},
+  {id:15, cat:'gewuerze', icon:'🌿', name:'Oregano getrocknet', unit:'200g', price:2.50},
+  {id:16, cat:'gewuerze', icon:'🫚', name:'Kreuzkümmel gemahlen', unit:'250g', price:3.20},
+  {id:17, cat:'gewuerze', icon:'⭐', name:'Pfeffer schwarz gemahlen', unit:'500g', price:5.60},
+  // Getränke
+  {id:18, cat:'getraenke', icon:'💧', name:'Mineralwasser still (1,5L)', unit:'6er Pack', price:3.90},
+  {id:19, cat:'getraenke', icon:'🥤', name:'Coca-Cola (0,33L Dose)', unit:'24er Kiste', price:18.50},
+  {id:20, cat:'getraenke', icon:'🍊', name:'Orangensaft (1L Tetra)', unit:'12er Pack', price:14.40},
+  {id:21, cat:'getraenke', icon:'☕', name:'Ayran (0,25L)', unit:'24er', price:12.00, new:true},
+  // Weine & Spirituosen
+  {id:22, cat:'weine', icon:'🍷', name:'Rotwein Tafelwein', unit:'Flasche', price:3.50},
+  {id:23, cat:'weine', icon:'🥂', name:'Weißwein trocken', unit:'Flasche', price:4.20},
+  {id:24, cat:'weine', icon:'🫧', name:'Raki (700ml)', unit:'Flasche', price:18.00},
+  // Verpackung
+  {id:25, cat:'verpackung', icon:'🥡', name:'Döner-Box (groß)', unit:'100 Stück', price:12.00},
+  {id:26, cat:'verpackung', icon:'🛍️', name:'Tragetaschen Papier', unit:'50 Stück', price:8.50},
+  {id:27, cat:'verpackung', icon:'🍴', name:'Plastikbesteck-Set', unit:'100 Sets', price:9.80},
+  {id:28, cat:'verpackung', icon:'📄', name:'Aluschalen (mittel)', unit:'100 Stück', price:14.50, new:true},
+];
+
+const catMeta = {
+  obst:{label:'Obst & Gemüse', icon:'🥦'},
+  tiefkuehl:{label:'Tiefkühlware', icon:'❄️'},
+  gewuerze:{label:'Gewürze', icon:'🌿'},
+  getraenke:{label:'Getränke', icon:'🥤'},
+  weine:{label:'Weine & Spirituosen', icon:'🍷'},
+  verpackung:{label:'Verpackung', icon:'📦'},
+};
+
+let activeCat = 'alle';
+let searchTerm = '';
+let cart = {}; // {id: qty}
+let itemRowCount = 0;
+
+// ═══════════════════════════════════════
+//  PREISLISTE RENDER
+// ═══════════════════════════════════════
+function renderProducts() {
+  const list = document.getElementById('productList');
+  const filtered = products.filter(p => {
+    const matchCat = activeCat === 'alle' || p.cat === activeCat;
+    const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchCat && matchSearch;
+  });
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="no-results">Keine Produkte gefunden.</div>';
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  filtered.forEach(p => {
+    if (!groups[p.cat]) groups[p.cat] = [];
+    groups[p.cat].push(p);
+  });
+
+  list.innerHTML = Object.entries(groups).map(([cat, items]) => `
+    <div class="category-block">
+      <div class="category-label">
+        <span class="cat-icon">${catMeta[cat].icon}</span>
+        ${catMeta[cat].label}
+      </div>
+      <table class="price-table">
+        ${items.map(p => `
+          <tr>
+            <td class="col-name">
+              ${p.icon} ${p.name}
+              ${p.new ? '<span class="badge-new">Neu</span>' : ''}
+            </td>
+            <td class="col-unit">/ ${p.unit}</td>
+            <td class="col-price">${p.price.toFixed(2)} €</td>
+            <td class="col-add">
+              <button class="add-btn" onclick="addToCart(${p.id})" title="Zur Bestellung">
+                ${cart[p.id] ? '✓' : '+'}
+              </button>
+            </td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+  `).join('');
+}
+
+function setCat(cat, btn) {
+  activeCat = cat;
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderProducts();
+}
+function filterProducts() {
+  searchTerm = document.getElementById('searchInput').value;
+  renderProducts();
+}
+
+// ═══════════════════════════════════════
+//  WARENKORB
+// ═══════════════════════════════════════
+function addToCart(id) {
+  if (cart[id]) {
+    delete cart[id];
+  } else {
+    cart[id] = 1;
+  }
+  updateCartUI();
+  renderProducts();
+}
+
+function updateCartUI() {
+  const count = Object.keys(cart).length;
+  const bar = document.getElementById('cartBar');
+  const countEl = document.getElementById('cartCount');
+  countEl.textContent = count;
+  bar.style.display = count > 0 ? 'flex' : 'none';
+  renderCartPreview();
+  updatePreview();
+}
+
+function renderCartPreview() {
+  const container = document.getElementById('cartItemsList');
+  const ids = Object.keys(cart).map(Number);
+  if (!ids.length) {
+    container.innerHTML = '<div class="cart-empty">Noch keine Produkte aus der Preisliste hinzugefügt.</div>';
+    return;
+  }
+  container.innerHTML = ids.map(id => {
+    const p = products.find(x => x.id === id);
+    return `
+      <div class="cart-item-row">
+        <span class="cart-item-name">${p.icon} ${p.name}</span>
+        <span style="display:flex;align-items:center;gap:.5rem">
+          <input type="number" min="1" value="${cart[id]}"
+            style="width:56px;background:var(--surface);border:1px solid var(--border);border-radius:6px;
+                   padding:.25rem .4rem;color:var(--text);font-size:.85rem;text-align:center;font-family:inherit"
+            onchange="setQty(${id},this.value)">
+          <span style="color:var(--muted);font-size:.78rem">${p.unit}</span>
+          <button class="cart-item-remove" onclick="removeFromCart(${id})">✕</button>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function setQty(id, val) {
+  cart[id] = Math.max(1, parseInt(val)||1);
+  updatePreview();
+}
+function removeFromCart(id) {
+  delete cart[id];
+  updateCartUI();
+  renderProducts();
+}
+
+function goToOrder() {
+  switchTab('bestellen');
+  renderCartPreview();
+  updatePreview();
+}
+
+// ═══════════════════════════════════════
+//  MANUELLE PRODUKT-ZEILEN
+// ═══════════════════════════════════════
+function addItemRow(name='', qty='') {
+  itemRowCount++;
+  const container = document.getElementById('orderItems');
+  const row = document.createElement('div');
+  row.className = 'order-item-row';
+  row.id = 'row_' + itemRowCount;
+  row.innerHTML = `
+    <div class="form-group">
+      <label>Produkt</label>
+      <input type="text" placeholder="z.B. Tomaten" value="${name}" oninput="updatePreview()">
+    </div>
+    <div class="form-group">
+      <label>Menge</label>
+      <input type="text" placeholder="5 kg" value="${qty}" style="width:90px" oninput="updatePreview()">
+    </div>
+    <button class="remove-item" onclick="removeRow('row_${itemRowCount}')">✕</button>
+  `;
+  container.appendChild(row);
+  updatePreview();
+}
+
+function removeRow(id) {
+  document.getElementById(id)?.remove();
+  updatePreview();
+}
+
+// ═══════════════════════════════════════
+//  VORSCHAU & WHATSAPP
+// ═══════════════════════════════════════
+function buildMessage() {
+  const name = document.getElementById('f_name').value.trim();
+  const tel = document.getElementById('f_tel').value.trim();
+  const datum = document.getElementById('f_datum').value;
+  const lieferart = document.getElementById('f_lieferart').value;
+  const note = document.getElementById('f_note').value.trim();
+
+  let lines = [];
+  lines.push('🛒 *Neue Bestellung – Yaman Gastro*');
+  lines.push('');
+  if (name) lines.push(`👤 *Betrieb:* ${name}`);
+  if (tel) lines.push(`📞 *Telefon:* ${tel}`);
+  if (datum) {
+    const d = new Date(datum);
+    lines.push(`📅 *Lieferdatum:* ${d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'})}`);
+  }
+  lines.push(`🚚 *Art:* ${lieferart}`);
+  lines.push('');
+  lines.push('*Bestellte Produkte:*');
+
+  // Aus Warenkorb
+  const cartIds = Object.keys(cart).map(Number);
+  cartIds.forEach(id => {
+    const p = products.find(x => x.id === id);
+    lines.push(`• ${p.name} – ${cart[id]} × ${p.unit}`);
+  });
+
+  // Manuelle Zeilen
+  document.querySelectorAll('#orderItems .order-item-row').forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    const n = inputs[0]?.value.trim();
+    const q = inputs[1]?.value.trim();
+    if (n) lines.push(`• ${n}${q ? ' – ' + q : ''}`);
+  });
+
+  if (note) {
+    lines.push('');
+    lines.push(`📝 *Anmerkung:* ${note}`);
+  }
+  lines.push('');
+  lines.push('_Bitte um Bestätigung. Danke!_');
+  return lines.join('\n');
+}
+
+function updatePreview() {
+  document.getElementById('previewBox').textContent = buildMessage();
+}
+
+function sendWhatsApp() {
+  const msg = buildMessage();
+  const phone = '4915129782084';
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+}
+
+// ═══════════════════════════════════════
+//  TABS
+// ═══════════════════════════════════════
+function switchTab(tab) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + tab).classList.add('active');
+  document.querySelectorAll('.tab-btn')[tab === 'preisliste' ? 0 : 1].classList.add('active');
+  if (tab === 'bestellen') { renderCartPreview(); updatePreview(); }
+}
+
+// Init
+renderProducts();
+addItemRow();
+updatePreview();
+</script>
+</body>
+</html>
