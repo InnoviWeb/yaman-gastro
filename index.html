@@ -183,6 +183,12 @@ header{
 .wa-btn svg{width:20px;height:20px}
 
 .divider{border:none;border-top:1.5px solid var(--sand);margin:1.5rem 0}
+.optional-toggle{display:flex;align-items:center;gap:.5rem;background:none;border:1.5px solid var(--border);border-radius:8px;padding:.6rem 1rem;font-family:'DM Sans',sans-serif;font-size:.83rem;color:var(--muted);cursor:pointer;transition:all .2s;width:100%;margin-bottom:.8rem;text-align:left}
+.optional-toggle:hover{border-color:var(--gold);color:var(--brown)}
+.optional-toggle .arrow{transition:transform .2s;margin-left:auto;font-size:.7rem}
+.optional-toggle.open .arrow{transform:rotate(180deg)}
+.optional-fields{display:none}
+.optional-fields.open{display:block;animation:fadeIn .2s ease}
 
 footer{text-align:center;padding:2rem;color:var(--muted);font-size:.8rem;border-top:1px solid var(--sand);margin-top:2rem}
 
@@ -296,23 +302,36 @@ footer{text-align:center;padding:2rem;color:var(--muted);font-size:.8rem;border-
   <div class="form-section-title">Ihre Angaben</div>
   <div class="form-grid">
     <div class="form-group">
-      <label>Betrieb / Name</label>
+      <label>Betrieb / Name <span style="color:var(--gold)">*</span></label>
       <input type="text" id="f_name" placeholder="Restaurant Mustermann" oninput="updatePreview()">
     </div>
     <div class="form-group">
-      <label>Telefon (optional)</label>
-      <input type="tel" id="f_tel" placeholder="+49 …" oninput="updatePreview()">
-    </div>
-    <div class="form-group">
-      <label>Lieferdatum</label>
-      <input type="date" id="f_datum" oninput="updatePreview()">
-    </div>
-    <div class="form-group">
-      <label>Lieferart</label>
+      <label>Lieferart <span style="color:var(--gold)">*</span></label>
       <select id="f_lieferart" onchange="updatePreview()">
         <option value="Lieferung">🚚 Lieferung</option>
         <option value="Abholung">🏪 Abholung</option>
       </select>
+    </div>
+  </div>
+
+  <button class="optional-toggle" id="optionalToggle" onclick="toggleOptional()">
+    Weitere Angaben <span style="color:var(--muted);font-size:.78rem;margin-left:.3rem">(optional)</span>
+    <span class="arrow">▼</span>
+  </button>
+  <div class="optional-fields" id="optionalFields">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Telefon</label>
+        <input type="tel" id="f_tel" placeholder="+49 …" oninput="updatePreview()">
+      </div>
+      <div class="form-group">
+        <label>Lieferdatum</label>
+        <input type="date" id="f_datum" oninput="updatePreview()">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Anmerkungen</label>
+      <textarea id="f_note" placeholder="Besondere Wünsche…" oninput="updatePreview()"></textarea>
     </div>
   </div>
 
@@ -326,11 +345,6 @@ footer{text-align:center;padding:2rem;color:var(--muted);font-size:.8rem;border-
 
   <div class="order-items" id="orderItems"></div>
   <button class="add-item-btn" onclick="addItemRow()">＋ Produkt manuell hinzufügen</button>
-
-  <div class="form-group">
-    <label>Anmerkungen</label>
-    <textarea id="f_note" placeholder="Besondere Wünsche…" oninput="updatePreview()"></textarea>
-  </div>
 
   <hr class="divider">
   <div style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">Vorschau WhatsApp-Nachricht</div>
@@ -495,6 +509,7 @@ function buildMessage(){
   return lines.join('\n');
 }
 function updatePreview(){document.getElementById('previewBox').textContent=buildMessage();}
+function toggleOptional(){const btn=document.getElementById('optionalToggle');const fields=document.getElementById('optionalFields');btn.classList.toggle('open');fields.classList.toggle('open');}
 function sendWhatsApp(){window.open('https://wa.me/4915129782084?text='+encodeURIComponent(buildMessage()),'_blank');}
 function switchTab(tab){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
