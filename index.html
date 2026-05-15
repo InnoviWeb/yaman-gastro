@@ -187,11 +187,26 @@ header{
 footer{text-align:center;padding:2rem;color:var(--muted);font-size:.8rem;border-top:1px solid var(--sand);margin-top:2rem}
 
 @media(max-width:640px){
-  header{padding:1rem 1.2rem}
-  .view{padding:1.5rem 1.2rem}
+  header{padding:.75rem 1rem;gap:.5rem}
+  .logo-wrap img{height:40px}
+  .tabs{gap:.2rem;padding:.25rem}
+  .tab-btn{padding:.45rem .9rem;font-size:.78rem}
+  .view{padding:1.2rem 1rem}
+  .view-title{font-size:1.5rem}
+  .deal-inner{padding:.9rem 1rem;gap:.6rem;flex-direction:column;align-items:flex-start}
+  .deal-items{gap:.6rem;width:100%}
+  .deal-item{padding:.5rem .8rem;width:100%}
+  .deal-timer{margin-left:0;text-align:left;width:100%;border-top:1px solid rgba(255,255,255,.1);padding-top:.6rem}
+  .deal-timer strong{font-size:1rem}
   .form-grid{grid-template-columns:1fr}
-  .deal-inner{padding:1rem 1.2rem;gap:.8rem}
   .order-item-row{grid-template-columns:1fr auto}
+  .price-table td{padding:.65rem .75rem;font-size:.82rem}
+  .col-add{width:90px}
+  .qty-btn{width:24px;height:24px;font-size:.9rem}
+  .cat-filters{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:.4rem;scrollbar-width:none}
+  .cat-filters::-webkit-scrollbar{display:none}
+  .cart-bar{bottom:1rem;right:1rem;left:1rem;justify-content:center}
+  footer{padding:1.5rem 1rem}
 }
 </style>
 </head>
@@ -491,8 +506,8 @@ function switchTab(tab){
 function updateCountdown(){
   const now=new Date(),sunday=new Date(now);
   sunday.setDate(now.getDate()+(7-now.getDay())%7||7);sunday.setHours(23,59,59,0);
-  const diff=sunday-now,h=Math.floor(diff/3600000),m=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);
-  document.getElementById('countdown').textContent=h+'h '+m+'m '+s+'s';
+  const diff=sunday-now,d=Math.floor(diff/86400000),h=Math.floor((diff%86400000)/3600000),m=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);
+  document.getElementById('countdown').textContent=d+'T '+h+'h '+m+'m '+s+'s';
 }
 updateCountdown();setInterval(updateCountdown,1000);
 renderProducts();addItemRow();updatePreview();
