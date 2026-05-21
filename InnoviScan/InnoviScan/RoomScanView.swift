@@ -241,9 +241,11 @@ private extension RoomScanViewController {
         let doorGeo   = room.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
         let windowGeo = room.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
 
-        // 2. USDZ speichern
+        // 2. USDZ speichern – autoreleasepool gibt RoomPlan-Interna früher frei
         let usdzURL = folder.appendingPathComponent("scan.usdz")
-        try room.export(to: usdzURL)
+        try autoreleasepool {
+            try room.export(to: usdzURL)
+        }
 
         // 3. PDF: Seite 1 = Grundriss, Seite 2 = Maßtabelle
         let pdfURL = folder.appendingPathComponent("bericht.pdf")
@@ -500,16 +502,17 @@ struct FloorPlanRenderer {
             text("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit InnoviScan", attrs: bodyAttrs)
 
             // Seite 3: Fotos pro Raum (nur wenn vorhanden)
+            // Bilder werden einzeln in autoreleasepool geladen, gezeichnet und sofort freigegeben.
             if let photos = roomPhotos, !photos.isEmpty {
                 let roomOrder = roomNames ?? Array(photos.keys.sorted())
                 for roomName in roomOrder {
                     guard let fileNames = photos[roomName], !fileNames.isEmpty else { continue }
-                    let images = fileNames.compactMap { name -> UIImage? in
-                        let imgURL = folderURL.appendingPathComponent(name)
-                        guard let data = try? Data(contentsOf: imgURL) else { return nil }
-                        return UIImage(data: data)
+
+                    // Prüfen ob mindestens eine Datei lesbar ist – ohne alle gleichzeitig zu laden
+                    let hasAny = fileNames.contains { name in
+                        FileManager.default.fileExists(atPath: folderURL.appendingPathComponent(name).path)
                     }
-                    guard !images.isEmpty else { continue }
+                    guard hasAny else { continue }
 
                     ctx.beginPage()
                     let gp = ctx.cgContext
@@ -527,13 +530,22 @@ struct FloorPlanRenderer {
 
                     let photoW: CGFloat = 160, photoH: CGFloat = 120, gap: CGFloat = 10
                     let cols = 3
-                    for (i, img) in images.enumerated() {
+
+                    // Jedes Bild einzeln laden, zeichnen, sofort freigeben
+                    for (i, name) in fileNames.enumerated() {
                         let col = CGFloat(i % cols)
                         let row = CGFloat(i / cols)
                         let px = 40 + col * (photoW + gap)
                         let py = photoY + row * (photoH + gap)
-                        if py + photoH > 800 { break }
-                        img.draw(in: CGRect(x: px, y: py, width: photoW, height: photoH))
+                        guard py + photoH <= 800 else { break }
+
+                        autoreleasepool {
+                            let imgURL = folderURL.appendingPathComponent(name)
+                            guard let data = try? Data(contentsOf: imgURL),
+                                  let img = UIImage(data: data) else { return }
+                            img.draw(in: CGRect(x: px, y: py, width: photoW, height: photoH))
+                            // img und data werden am Ende dieses autoreleasepool-Blocks freigegeben
+                        }
                     }
                 }
             }

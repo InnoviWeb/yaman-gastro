@@ -25,8 +25,7 @@ struct ScanDetailView: View {
     @State private var roomNames: [String] = []
     @State private var saveConfirmation: String? = nil
 
-    // Fotos pro Raum
-    @State private var roomPhotos: [String: [UIImage]] = [:]
+    // Fotos pro Raum (nur Dateinamen im State – kein UIImage-RAM-Hold)
     @State private var roomPhotoFileNames: [String: [String]] = [:]
     @State private var showPhotoPicker: Bool = false
     @State private var photoPickerRoom: String = ""
@@ -246,16 +245,13 @@ struct ScanDetailView: View {
                                         .font(.caption)
                                 }
                             }
-                            if let images = roomPhotos[room], !images.isEmpty {
+                            if let fileNames = roomPhotoFileNames[room], !fileNames.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 8) {
-                                        ForEach(Array(images.enumerated()), id: \.offset) { _, img in
-                                            Image(uiImage: img)
-                                                .resizable()
-                                                .scaledToFill()
-                                                .frame(width: 80, height: 80)
-                                                .clipped()
-                                                .cornerRadius(6)
+                                        ForEach(fileNames, id: \.self) { fileName in
+                                            LazyPhotoThumb(
+                                                fileURL: record.folderURL.appendingPathComponent(fileName)
+                                            )
                                         }
                                     }
                                 }
@@ -330,19 +326,8 @@ struct ScanDetailView: View {
             etage  = record.address?.etage  ?? ""
             roomNames = record.roomNames ?? []
 
-            // Fotos laden
-            var loadedPhotos: [String: [UIImage]] = [:]
-            let storedFileNames = record.roomPhotos ?? [:]
-            for (roomName, fileNames) in storedFileNames {
-                let images = fileNames.compactMap { name -> UIImage? in
-                    let url = record.folderURL.appendingPathComponent(name)
-                    guard let data = try? Data(contentsOf: url) else { return nil }
-                    return UIImage(data: data)
-                }
-                if !images.isEmpty { loadedPhotos[roomName] = images }
-            }
-            roomPhotos = loadedPhotos
-            roomPhotoFileNames = storedFileNames
+            // Nur Dateinamen laden – kein UIImage-Massen-Load (Lazy Loading in der UI)
+            roomPhotoFileNames = record.roomPhotos ?? [:]
 
             // Feuchtigkeitsmessungen laden
             moistureMeasurements = record.moistureMeasurements ?? []
@@ -394,15 +379,14 @@ struct ScanDetailView: View {
         let safeName = room.filter { $0.isLetter || $0.isNumber || $0 == "_" }
         let fileName = "photo_\(safeName)_\(UUID().uuidString.prefix(8)).jpg"
         let url = record.folderURL.appendingPathComponent(fileName)
-        guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+
+        // Auf max. 2048px skalieren bevor speichern – Original-UIImage danach nicht mehr halten
+        let scaled = image.scaledToFit(maxDimension: 2048)
+        guard let data = scaled.jpegData(compressionQuality: 0.75) else { return }
         try? data.write(to: url)
+        // 'scaled' und 'image' werden jetzt nicht mehr referenziert → sofort freigegeben
 
-        // UI-State aktualisieren
-        var updatedImages = roomPhotos[room] ?? []
-        updatedImages.append(image)
-        roomPhotos[room] = updatedImages
-
-        // Dateinamen-State aktualisieren
+        // Nur Dateiname im State halten – kein UIImage
         var updatedNames = roomPhotoFileNames[room] ?? []
         updatedNames.append(fileName)
         roomPhotoFileNames[room] = updatedNames
@@ -515,6 +499,57 @@ struct ScanDetailView: View {
         saveConfirmation = "Gespeichert ✓"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             saveConfirmation = nil
+        }
+    }
+}
+
+// MARK: - UIImage Memory-Hilfsfunktion
+
+extension UIImage {
+    /// Skaliert das Bild so, dass keine Seite größer als maxDimension ist.
+    /// Gibt self zurück wenn das Bild bereits kleiner ist.
+    func scaledToFit(maxDimension: CGFloat) -> UIImage {
+        let maxSide = max(size.width, size.height)
+        guard maxSide > maxDimension else { return self }
+        let ratio = maxDimension / maxSide
+        let newSize = CGSize(width: (size.width * ratio).rounded(),
+                             height: (size.height * ratio).rounded())
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in
+            self.draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+}
+
+// MARK: - Lazy Foto-Thumbnail (lädt erst wenn sichtbar, hält nur 160px im RAM)
+
+struct LazyPhotoThumb: View {
+    let fileURL: URL
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let img = image {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.15))
+                    .overlay(ProgressView().scaleEffect(0.7))
+            }
+        }
+        .frame(width: 80, height: 80)
+        .clipped()
+        .cornerRadius(6)
+        .task {
+            guard image == nil else { return }
+            let url = fileURL
+            image = await Task.detached(priority: .utility) {
+                guard let data = try? Data(contentsOf: url),
+                      let full = UIImage(data: data) else { return nil }
+                return full.scaledToFit(maxDimension: 160)
+            }.value
         }
     }
 }
