@@ -415,13 +415,29 @@ struct FloorPlanRenderer {
         moistureMeasurements: [MoistureMeasurement]?,
         at url: URL
     ) throws {
+        // Gesamtseitenzahl vorab berechnen
+        var totalPages = 2  // Grundriss + Maßtabelle
+        if let photos = roomPhotos {
+            let roomOrder = roomNames ?? Array(photos.keys.sorted())
+            for roomName in roomOrder {
+                if let fileNames = photos[roomName], !fileNames.isEmpty {
+                    let hasAny = fileNames.contains {
+                        FileManager.default.fileExists(atPath: folderURL.appendingPathComponent($0).path)
+                    }
+                    if hasAny { totalPages += 1 }
+                }
+            }
+        }
+        if let moisture = moistureMeasurements, !moisture.isEmpty { totalPages += 1 }
+
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
         let pdfData = UIGraphicsPDFRenderer(bounds: pageRect).pdfData { ctx in
 
             // Seite 1: Grundriss
             drawPDFPage(context: ctx, walls: wallGeometry, doors: doorGeometry, windows: windowGeometry,
                         schadensnummer: schadensnummer, date: date, floorAreaM2: floorAreaM2,
-                        address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas)
+                        address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
+                        pageNum: 1, totalPages: totalPages)
 
             // Seite 2: Maßtabelle
             ctx.beginPage()
@@ -501,8 +517,11 @@ struct FloorPlanRenderer {
             nl(8)
             text("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit InnoviScan", attrs: bodyAttrs)
 
-            // Seite 3: Fotos pro Raum (nur wenn vorhanden)
+            drawFooter(g: g, pageW: 595, y: 842 - 28, pageNum: 2, totalPages: totalPages)
+
+            // Seite 3+: Fotos pro Raum (nur wenn vorhanden)
             // Bilder werden einzeln in autoreleasepool geladen, gezeichnet und sofort freigegeben.
+            var currentPage = 2
             if let photos = roomPhotos, !photos.isEmpty {
                 let roomOrder = roomNames ?? Array(photos.keys.sorted())
                 for roomName in roomOrder {
@@ -514,6 +533,7 @@ struct FloorPlanRenderer {
                     }
                     guard hasAny else { continue }
 
+                    currentPage += 1
                     ctx.beginPage()
                     let gp = ctx.cgContext
                     let _ = drawKRAFTHeader(g: gp, pageW: 595, schadensnummer: schadensnummer,
@@ -547,11 +567,14 @@ struct FloorPlanRenderer {
                             // img und data werden am Ende dieses autoreleasepool-Blocks freigegeben
                         }
                     }
+
+                    drawFooter(g: gp, pageW: 595, y: 842 - 28, pageNum: currentPage, totalPages: totalPages)
                 }
             }
 
-            // Seite 4: Feuchtigkeitsmessung (nur wenn vorhanden)
+            // Letzte Seite: Feuchtigkeitsmessung (nur wenn vorhanden)
             if let moisture = moistureMeasurements, !moisture.isEmpty {
+                currentPage += 1
                 ctx.beginPage()
                 let gm = ctx.cgContext
                 let headerHm = drawKRAFTHeader(g: gm, pageW: 595, schadensnummer: schadensnummer,
@@ -602,6 +625,8 @@ struct FloorPlanRenderer {
                         my += 16
                     }
                 }
+
+                drawFooter(g: gm, pageW: 595, y: 842 - 28, pageNum: currentPage, totalPages: totalPages)
             }
         }
         try pdfData.write(to: url)
@@ -617,13 +642,15 @@ struct FloorPlanRenderer {
         floorAreaM2: Double,
         address: ScanAddress?,
         roomNames: [String]?,
-        roomFloorAreas: [Double]? = nil
+        roomFloorAreas: [Double]? = nil,
+        pageNum: Int = 1,
+        totalPages: Int = 1
     ) {
         context.beginPage()
         let g = context.cgContext
         let pageW: CGFloat = 595
         let pageH: CGFloat = 842
-        let footerH: CGFloat = 36
+        let footerH: CGFloat = 24
         let margin:  CGFloat = 36
 
         let headerH = drawKRAFTHeader(
@@ -637,14 +664,17 @@ struct FloorPlanRenderer {
             x: margin,
             y: headerH + 4,
             width: pageW - 2 * margin,
-            height: pageH - headerH - 4 - footerH - margin
+            height: pageH - headerH - 4 - footerH - 10
         )
         drawFloorPlan(g: g, in: drawRect,
                       walls: walls, doors: doors, windows: windows,
                       floorAreaM2: floorAreaM2, roomNames: roomNames,
-                      roomFloorAreas: roomFloorAreas)
+                      roomFloorAreas: roomFloorAreas,
+                      etage: address?.etage,
+                      pageNum: pageNum, totalPages: totalPages)
 
-        drawFooter(g: g, pageW: pageW, y: pageH - footerH + 4)
+        drawFooter(g: g, pageW: pageW, y: pageH - footerH + 4,
+                   pageNum: pageNum, totalPages: totalPages)
     }
 
     // MARK: Vorschau-Bild (wird von ScanDetailView aufgerufen)
@@ -685,7 +715,10 @@ struct FloorPlanRenderer {
         windows: [OpeningGeometry2D],
         floorAreaM2: Double,
         roomNames: [String]? = nil,
-        roomFloorAreas: [Double]? = nil
+        roomFloorAreas: [Double]? = nil,
+        etage: String? = nil,
+        pageNum: Int = 0,
+        totalPages: Int = 0
     ) {
         guard !walls.isEmpty else {
             let attrs: [NSAttributedString.Key: Any] = [
@@ -734,6 +767,15 @@ struct FloorPlanRenderer {
         }
 
         drawGrid(g: g, rect: CGRect(x: ox, y: oy, width: scaledW, height: scaledH))
+
+        // Etage-Bezeichnung oben links im Grundriss-Bereich
+        if let et = etage, !et.isEmpty {
+            let etAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 8),
+                .foregroundColor: UIColor(white: 0.35, alpha: 1)
+            ]
+            ("Etage: \(et)" as NSString).draw(at: CGPoint(x: ox + 4, y: oy + 4), withAttributes: etAttrs)
+        }
 
         // 1. Wände (schwarze, dicke Linien) – zuerst, damit Öffnungen darüber sichtbar sind
         g.saveGState()
@@ -806,62 +848,89 @@ struct FloorPlanRenderer {
             )
         }
 
-        // Raumname(n) + Fläche in der Raummitte
+        // Raumname + Fläche + Abmessungen in der Raummitte
         if floorAreaM2 > 0.01 {
-            let ps = NSMutableParagraphStyle()
-            ps.alignment = .center
-            let labelAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 11),
-                .foregroundColor: UIColor.darkGray,
+            let ps = NSMutableParagraphStyle(); ps.alignment = .center
+            let roomLabelAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 10),
+                .foregroundColor: UIColor(white: 0.2, alpha: 1),
                 .paragraphStyle: ps
             ]
             let names = roomNames?.filter { !$0.isEmpty } ?? []
             let areas = roomFloorAreas ?? []
             var lines: [String] = []
+            let dimStr = String(format: "(%.2f × %.2f m)", worldW, worldH)
+                .replacingOccurrences(of: ".", with: ",")
             for (i, name) in names.enumerated() {
-                if i < areas.count {
-                    let areaStr = String(format: "%.1f m²", areas[i])
-                        .replacingOccurrences(of: ".", with: ",")
-                    lines.append("\(name)  \(areaStr)")
-                } else {
-                    lines.append(name)
-                }
+                let areaStr = i < areas.count
+                    ? String(format: "%.2f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
+                    : String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
+                lines.append("\(name)  \(areaStr)  \(dimStr)")
             }
             if lines.isEmpty {
-                let areaStr = String(format: "%.1f m²", floorAreaM2)
-                    .replacingOccurrences(of: ".", with: ",")
-                lines.append(areaStr)
+                let areaStr = String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
+                lines.append("\(areaStr)  \(dimStr)")
             }
             let roomLabel = lines.joined(separator: "\n")
-            let w: CGFloat = 110, h: CGFloat = CGFloat(lines.count) * 16 + 4
+            let lw: CGFloat = 180, lh: CGFloat = CGFloat(lines.count) * 16 + 4
             (roomLabel as NSString).draw(
-                in: CGRect(x: ox + scaledW/2 - w/2, y: oy + scaledH/2 - h/2,
-                           width: w, height: h),
-                withAttributes: labelAttrs
+                in: CGRect(x: ox + scaledW/2 - lw/2, y: oy + scaledH/2 - lh/2,
+                           width: lw, height: lh),
+                withAttributes: roomLabelAttrs
             )
         }
 
-        // Maßstabsleiste (1 m)
-        let barLen = scale
-        let bx = rect.minX + (rect.width - barLen) / 2
-        let by = oy + scaledH + 22
-        if by < rect.maxY - 4 {
+        // Maßstabsleiste mit Ticks (0 – 0.5 – 1.0 – 1.5 – 2.0 – 2.5 m) + Maßstabszahl
+        let barMeters: [Double] = [0, 0.5, 1.0, 1.5, 2.0, 2.5]
+        let totalBarLen = CGFloat(barMeters.last ?? 2.5) * scale
+        let bx = ox + (scaledW - totalBarLen) / 2
+        let by = oy + scaledH + 16
+        let sAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 7.5),
+            .foregroundColor: UIColor(white: 0.25, alpha: 1)
+        ]
+        if by + 20 < rect.maxY {
             g.saveGState()
-            g.setStrokeColor(UIColor.darkGray.cgColor)
-            g.setLineWidth(1.5)
+            g.setStrokeColor(UIColor(white: 0.25, alpha: 1).cgColor)
+            g.setLineWidth(1.2)
+            // Hauptlinie
             g.move(to: CGPoint(x: bx, y: by))
-            g.addLine(to: CGPoint(x: bx + barLen, y: by))
-            for tx in [bx, bx + barLen] {
-                g.move(to: CGPoint(x: tx, y: by - 4)); g.addLine(to: CGPoint(x: tx, y: by + 4))
+            g.addLine(to: CGPoint(x: bx + totalBarLen, y: by))
+            // Ticks + Labels
+            for m in barMeters {
+                let tx = bx + CGFloat(m) * scale
+                g.move(to: CGPoint(x: tx, y: by - 5))
+                g.addLine(to: CGPoint(x: tx, y: by + 3))
+                let lbl = m == 0 ? "0" : String(format: m.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", m) + " m"
+                let lsz = (lbl as NSString).size(withAttributes: sAttrs)
+                (lbl as NSString).draw(at: CGPoint(x: tx - lsz.width/2, y: by + 5),
+                                       withAttributes: sAttrs)
             }
             g.strokePath()
-            let sAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 8),
-                .foregroundColor: UIColor.darkGray
-            ]
-            ("1 m" as NSString).draw(
-                at: CGPoint(x: bx + barLen/2 - 8, y: by + 6), withAttributes: sAttrs)
             g.restoreGState()
+            // Maßstabszahl (1:XX)
+            let mmPerPoint: Double = 210.0 / 595.0   // A4: 210mm = 595pt
+            let scaleRatio = 1000.0 / (Double(scale) * mmPerPoint)
+            let standards = [20, 25, 50, 75, 100, 125, 150, 200, 250, 500]
+            let nearestScale = standards.min(by: { abs($0 - Int(scaleRatio.rounded())) < abs($1 - Int(scaleRatio.rounded())) }) ?? Int(scaleRatio.rounded())
+            let scaleStr = "M 1:\(nearestScale)"
+            let ssz = (scaleStr as NSString).size(withAttributes: sAttrs)
+            (scaleStr as NSString).draw(
+                at: CGPoint(x: bx + totalBarLen + 8, y: by - 2),
+                withAttributes: sAttrs)
+        }
+
+        // Seitenzahl unten rechts
+        if pageNum > 0 && totalPages > 0 {
+            let pgAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 8),
+                .foregroundColor: UIColor(white: 0.4, alpha: 1)
+            ]
+            let pgStr = "\(pageNum) / \(totalPages)"
+            let psz = (pgStr as NSString).size(withAttributes: pgAttrs)
+            (pgStr as NSString).draw(
+                at: CGPoint(x: rect.maxX - psz.width, y: rect.maxY - psz.height - 2),
+                withAttributes: pgAttrs)
         }
     }
 
@@ -881,7 +950,8 @@ struct FloorPlanRenderer {
     }
 
     /// Zeichnet den KRAFT-Briefkopf auf jeder PDF-Seite.
-    /// Gibt die Höhe des Headers zurück, damit der Aufrufer den Inhalt korrekt positioniert.
+    /// Links: Objekt-Infos gestapelt. Rechts: logokraftsystem.png (aspect-fit).
+    /// Gibt die Höhe des Headers zurück.
     @discardableResult
     static func drawKRAFTHeader(
         g: CGContext,
@@ -894,91 +964,102 @@ struct FloorPlanRenderer {
     ) -> CGFloat {
         let margin: CGFloat = 36
         let df = DateFormatter()
-        df.dateStyle = .medium; df.timeStyle = .none
+        df.dateStyle = .medium; df.timeStyle = .short
         df.locale = Locale(identifier: "de_DE")
 
-        let bold11: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 11), .foregroundColor: UIColor.black]
-        let reg9:   [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9),      .foregroundColor: UIColor.darkGray]
-        let label9: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 8.5),.foregroundColor: UIColor(white: 0.45, alpha: 1)]
-        let val9:   [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9),      .foregroundColor: UIColor.black]
-
-        var y: CGFloat = 14
-
-        // Zeile 1: Logo + Firmenname + Kurzinfo
-        if let logo = UIImage(named: "kraft_logo") {
-            logo.draw(in: CGRect(x: margin, y: y, width: 52, height: 38))
-        }
-        let logoRight: CGFloat = margin + 58
-        ("KRAFT System GmbH" as NSString).draw(at: CGPoint(x: logoRight, y: y + 2), withAttributes: bold11)
-        let companyInfo = "Musterstr. 1  ·  12345 Stadt  ·  Tel: 0800 / 000 000  ·  www.kraft-system.de"
-        (companyInfo as NSString).draw(at: CGPoint(x: logoRight, y: y + 16), withAttributes: reg9)
-        ("Aufmaßbericht / Schadensdokumentation" as NSString).draw(at: CGPoint(x: logoRight, y: y + 28), withAttributes: reg9)
-
-        y += 50
-
-        // Dünne Trennlinie
-        g.setStrokeColor(UIColor(white: 0.78, alpha: 1).cgColor)
-        g.setLineWidth(0.5)
-        g.move(to: CGPoint(x: margin, y: y)); g.addLine(to: CGPoint(x: pageW - margin, y: y))
-        g.strokePath()
-        y += 8
-
-        // Zeile 2: Metadaten in 4 Spalten
-        let col: [(CGFloat, String, String)] = [
-            (margin,       "SCHADENSNR.",  schadensnummer),
-            (margin + 120, "DATUM",        df.string(from: date)),
-            (margin + 240, "GESAMTFLÄCHE", floorAreaM2 > 0 ? String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",") : "–"),
-            (margin + 360, "WÄNDE / TÜR / FENSTER", "–")   // wird vom Aufrufer nicht genutzt; leer lassen
+        let capAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 6.5),
+            .foregroundColor: UIColor(white: 0.55, alpha: 1)
         ]
-        for (x, lbl, val) in col.dropLast() {
-            (lbl as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: label9)
-            (val as NSString).draw(at: CGPoint(x: x, y: y + 11), withAttributes: val9)
-        }
-        y += 26
+        let valAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9.5),
+            .foregroundColor: UIColor.black
+        ]
 
-        // Zeile 3: Objekt + Räume (nur wenn Daten vorhanden)
-        var addrParts: [String] = []
+        // ─── Rechts: Logo (aspect-fit in 130 × 55) ───
+        let logoAreaW: CGFloat = 130, logoAreaH: CGFloat = 55
+        let logoAreaX = pageW - margin - logoAreaW
+        let logoAreaY: CGFloat = 10
+        if let logo = UIImage(named: "logokraftsystem") {
+            let s = logo.size
+            let r = min(logoAreaW / s.width, logoAreaH / s.height)
+            let dw = s.width * r, dh = s.height * r
+            logo.draw(in: CGRect(x: logoAreaX + (logoAreaW - dw) / 2,
+                                 y: logoAreaY + (logoAreaH - dh) / 2,
+                                 width: dw, height: dh))
+        }
+
+        // ─── Links: Objekt-Infos ───
+        var y: CGFloat = 10
+        let rowH: CGFloat = 19
+
+        func infoRow(label: String, value: String) {
+            let v = value.trimmingCharacters(in: .whitespaces)
+            guard !v.isEmpty else { return }
+            (label as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: capAttrs)
+            y += 8
+            (v as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: valAttrs)
+            y += rowH
+        }
+
+        infoRow(label: "SCHADENSNUMMER", value: schadensnummer)
+        infoRow(label: "DATUM / UHRZEIT", value: df.string(from: date))
+
         if let addr = address {
-            if !addr.street.isEmpty   { addrParts.append(addr.street) }
-            if !addr.cityLine.isEmpty { addrParts.append(addr.cityLine) }
-            if !addr.etage.isEmpty    { addrParts.append(addr.etage) }
-        }
-        let roomStr = roomNames?.filter { !$0.isEmpty }.joined(separator: " · ")
-
-        if !addrParts.isEmpty || roomStr != nil {
-            ("OBJEKT" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: label9)
-            if !addrParts.isEmpty {
-                (addrParts.joined(separator: "  ·  ") as NSString)
-                    .draw(at: CGPoint(x: margin + 52, y: y), withAttributes: val9)
-            }
-            if let rs = roomStr {
-                ("RÄUME" as NSString).draw(at: CGPoint(x: margin + 280, y: y), withAttributes: label9)
-                (rs as NSString).draw(at: CGPoint(x: margin + 320, y: y), withAttributes: val9)
-            }
-            y += 18
+            let addrStr = [addr.street, addr.cityLine].filter { !$0.isEmpty }.joined(separator: ", ")
+            infoRow(label: "ADRESSE", value: addrStr)
+            infoRow(label: "ETAGE / LAGE", value: addr.etage)
         }
 
-        // Abschlusslinie (dicker)
-        g.setStrokeColor(UIColor(white: 0.55, alpha: 1).cgColor)
+        if floorAreaM2 > 0 {
+            let aStr = String(format: "%.2f m²", floorAreaM2)
+                .replacingOccurrences(of: ".", with: ",")
+            infoRow(label: "GRUNDFLÄCHE (SCAN)", value: aStr)
+        }
+
+        if let names = roomNames?.filter({ !$0.isEmpty }), !names.isEmpty {
+            infoRow(label: "RÄUME", value: names.joined(separator: " · "))
+        }
+
+        // Unterkante: das Größere von Textblock und Logo
+        let contentBottom = max(y, logoAreaY + logoAreaH + 6)
+
+        // Trennlinie (volle Breite, dunkel)
+        g.saveGState()
+        g.setStrokeColor(UIColor(white: 0.2, alpha: 1).cgColor)
         g.setLineWidth(0.75)
-        g.move(to: CGPoint(x: 0, y: y + 4)); g.addLine(to: CGPoint(x: pageW, y: y + 4))
+        g.move(to: CGPoint(x: 0, y: contentBottom + 4))
+        g.addLine(to: CGPoint(x: pageW, y: contentBottom + 4))
         g.strokePath()
+        g.restoreGState()
 
-        return y + 12
+        return contentBottom + 12
     }
 
-    private static func drawFooter(g: CGContext, pageW: CGFloat, y: CGFloat) {
-        g.setStrokeColor(UIColor.lightGray.cgColor)
-        g.setLineWidth(0.5)
-        g.move(to: CGPoint(x: 36, y: y - 6)); g.addLine(to: CGPoint(x: pageW - 36, y: y - 6))
-        g.strokePath()
+    /// Fußzeile mit Firmenadresse und optionaler Seitenzahl.
+    private static func drawFooter(g: CGContext, pageW: CGFloat, y: CGFloat,
+                                   pageNum: Int = 0, totalPages: Int = 0) {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: 8.5),
-            .foregroundColor: UIColor.lightGray
+            .font: UIFont.systemFont(ofSize: 7.5),
+            .foregroundColor: UIColor(white: 0.45, alpha: 1)
         ]
-        ("Seite 1 – Grundriss (Draufsicht)  |  Erstellt mit InnoviScan" as NSString)
-            .draw(at: CGPoint(x: 36, y: y), withAttributes: attrs)
-        ("Handnotizen / Messpunkte eintragbar" as NSString)
-            .draw(at: CGPoint(x: pageW - 218, y: y), withAttributes: attrs)
+        // Trennlinie
+        g.saveGState()
+        g.setStrokeColor(UIColor(white: 0.3, alpha: 1).cgColor)
+        g.setLineWidth(0.5)
+        g.move(to: CGPoint(x: 0, y: y - 4))
+        g.addLine(to: CGPoint(x: pageW, y: y - 4))
+        g.strokePath()
+        g.restoreGState()
+
+        let company = "Kraft Systemtrocknung GmbH  ·  Mozartweg 2c, 63225 Langen  ·  Tel. 06103 270 54 50  ·  info@kraft-system.de"
+        (company as NSString).draw(at: CGPoint(x: 36, y: y + 2), withAttributes: attrs)
+
+        if pageNum > 0 && totalPages > 0 {
+            let ps = "Seite \(pageNum) / \(totalPages)"
+            let sz = (ps as NSString).size(withAttributes: attrs)
+            (ps as NSString).draw(at: CGPoint(x: pageW - 36 - sz.width, y: y + 2),
+                                  withAttributes: attrs)
+        }
     }
 }

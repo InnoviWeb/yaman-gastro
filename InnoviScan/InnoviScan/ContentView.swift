@@ -66,7 +66,7 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                     } else if filteredRecords.isEmpty {
-                        Text("Keine Ergebnisse für „\(searchText)".")
+                        Text("Keine Ergebnisse für \"\(searchText)\".")
                             .foregroundColor(.secondary)
                             .font(.subheadline)
                     } else {
