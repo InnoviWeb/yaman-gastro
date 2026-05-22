@@ -980,7 +980,7 @@ struct FloorPlanRenderer {
         let logoAreaW: CGFloat = 130, logoAreaH: CGFloat = 55
         let logoAreaX = pageW - margin - logoAreaW
         let logoAreaY: CGFloat = 10
-        if let logo = UIImage(named: "logokraftsystem") {
+        if let logo = UIImage(named: "kraft_logo") {
             let s = logo.size
             let r = min(logoAreaW / s.width, logoAreaH / s.height)
             let dw = s.width * r, dh = s.height * r
