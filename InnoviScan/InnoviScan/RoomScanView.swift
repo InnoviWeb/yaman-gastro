@@ -34,7 +34,11 @@ class RoomScanViewController: UIViewController {
     private var roomCaptureView: RoomCaptureView!
     private var stopButton: UIButton!
     private var loadingOverlay: UIView!
+    private var loadingLabel: UILabel!
     private var isProcessing = false
+
+    private var capturedRooms: [CapturedRoom] = []
+    private var collectedNames: [String] = []
 
     init(schadensnummer: String, onDone: @escaping (Bool) -> Void) {
         self.schadensnummer = schadensnummer
@@ -73,13 +77,13 @@ class RoomScanViewController: UIViewController {
 
     private func setupStopButton() {
         stopButton = UIButton(type: .system)
-        stopButton.setTitle("Scan beenden", for: .normal)
+        stopButton.setTitle("Raum fertig", for: .normal)
         stopButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
         stopButton.backgroundColor = .systemBlue
         stopButton.setTitleColor(.white, for: .normal)
         stopButton.layer.cornerRadius = 12
         stopButton.translatesAutoresizingMaskIntoConstraints = false
-        stopButton.addTarget(self, action: #selector(stopScan), for: .touchUpInside)
+        stopButton.addTarget(self, action: #selector(roomDone), for: .touchUpInside)
         view.addSubview(stopButton)
 
         NSLayoutConstraint.activate([
@@ -101,13 +105,13 @@ class RoomScanViewController: UIViewController {
         spinner.startAnimating()
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
-        let label = UILabel()
-        label.text = "Scan wird gespeichert…"
-        label.textColor = .white
-        label.font = .systemFont(ofSize: 16)
-        label.translatesAutoresizingMaskIntoConstraints = false
+        loadingLabel = UILabel()
+        loadingLabel.text = "Wird verarbeitet…"
+        loadingLabel.textColor = .white
+        loadingLabel.font = .systemFont(ofSize: 16)
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = UIStackView(arrangedSubviews: [spinner, label])
+        let stack = UIStackView(arrangedSubviews: [spinner, loadingLabel])
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 12
@@ -122,7 +126,7 @@ class RoomScanViewController: UIViewController {
         view.addSubview(loadingOverlay)
     }
 
-    @objc private func stopScan() {
+    @objc private func roomDone() {
         stopButton.isEnabled = false
         roomCaptureView.captureSession.stop()
     }
@@ -136,13 +140,12 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
         isProcessing = true
 
         if let error = error {
-            DispatchQueue.main.async {
-                self.showError(error.localizedDescription)
-            }
+            DispatchQueue.main.async { self.showError(error.localizedDescription) }
             return
         }
 
         DispatchQueue.main.async {
+            self.loadingLabel.text = "Raum wird verarbeitet…"
             self.loadingOverlay.isHidden = false
         }
 
@@ -175,90 +178,162 @@ extension RoomScanViewController: RoomCaptureViewDelegate {
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {}
 }
 
-// MARK: - Speichern
+// MARK: - Scan-Loop
 
 private extension RoomScanViewController {
 
-    func saveResults(room: CapturedRoom, roomNames: [String]) throws -> ScanRecord {
+    func startNewScan() {
+        isProcessing = false
+        stopButton.isEnabled = true
+        roomCaptureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
+    }
+
+    func showNamingScreen(for room: CapturedRoom) {
+        // roomCount: 1 — jeder Scan-Durchgang entspricht genau einem Raum
+        let namingVC = UIHostingController(rootView: RoomNamingView(roomCount: 1) { [weak self] names in
+            guard let self = self else { return }
+            let name = names.first ?? "Raum \(self.capturedRooms.count + 1)"
+            self.capturedRooms.append(room)
+            self.collectedNames.append(name)
+            let area = room.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+            self.dismiss(animated: true) {
+                self.showRoomSummaryAlert(roomName: name, area: area)
+            }
+        })
+        namingVC.isModalInPresentation = true
+        present(namingVC, animated: true)
+    }
+
+    func showRoomSummaryAlert(roomName: String, area: Double) {
+        let areaStr = String(format: "%.1f", area)
+        let count = capturedRooms.count
+        let plural = count == 1 ? "Raum" : "Räume"
+        let alert = UIAlertController(
+            title: "Raum gespeichert",
+            message: "\(roomName)  ·  \(areaStr) m²\n\n\(count) \(plural) erfasst",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Nächster Raum", style: .default) { _ in
+            self.startNewScan()
+        })
+        alert.addAction(UIAlertAction(title: "Wohnung abschließen", style: .default) { _ in
+            self.runStructureBuilder()
+        })
+        present(alert, animated: true)
+    }
+
+    func runStructureBuilder() {
+        guard !capturedRooms.isEmpty else { showError("Keine Räume gescannt."); return }
+        loadingLabel.text = "Räume werden verbunden…"
+        loadingOverlay.isHidden = false
+
+        Task {
+            do {
+                let builder = StructureBuilder(options: [.beautifyObjects])
+                let structure = try await builder.capturedStructure(from: capturedRooms)
+                let record = try saveResults(structure: structure, roomNames: collectedNames)
+                await MainActor.run {
+                    ScanStore.shared.add(record)
+                    onDone(true)
+                }
+            } catch {
+                // StructureBuilder fehlgeschlagen — Einzelräume als Fallback speichern
+                do {
+                    let record = try saveFallback(rooms: capturedRooms, roomNames: collectedNames)
+                    await MainActor.run {
+                        ScanStore.shared.add(record)
+                        onDone(true)
+                    }
+                } catch let fallbackError {
+                    await MainActor.run {
+                        self.loadingOverlay.isHidden = true
+                        self.showError(fallbackError.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - StructureBuilder: saveResults
+
+    func saveResults(structure: CapturedStructure, roomNames: [String]) throws -> ScanRecord {
         let fm = FileManager.default
         let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let relativePath = "Scans/\(schadensnummer)"
         let folder = docs.appendingPathComponent(relativePath, isDirectory: true)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
 
-        // 1. Maße extrahieren
-        let wallM = room.walls.map {
+        // 1. Maße aus der zusammengeführten Struktur (alle Räume, Weltkoordinaten)
+        let wallM = structure.walls.map {
             WallMeasurement(
                 width:      (Double($0.dimensions.x) * 100).rounded() / 100,
                 height:     (Double($0.dimensions.y) * 100).rounded() / 100,
                 confidence: $0.confidence.germanLabel
             )
         }
-        let doorM = room.doors.map {
+        let doorM = structure.doors.map {
             SurfaceMeasurement(
                 width:  (Double($0.dimensions.x) * 100).rounded() / 100,
                 height: (Double($0.dimensions.y) * 100).rounded() / 100
             )
         }
-        let windowM = room.windows.map {
+        let windowM = structure.windows.map {
             SurfaceMeasurement(
                 width:  (Double($0.dimensions.x) * 100).rounded() / 100,
                 height: (Double($0.dimensions.y) * 100).rounded() / 100
             )
-        }
-        let floorArea = room.floors.reduce(0.0) {
-            $0 + Double($1.dimensions.x * $1.dimensions.z)
-        }
-        let roomFloorAreas: [Double] = room.floors.map {
-            Double($0.dimensions.x * $0.dimensions.z)
         }
 
-        // Geometrie für 2D-Grundriss (Draufsicht: Y ignoriert, XZ-Projektion)
-        // columns.0 = lokale X-Achse (entlang der Wand), columns.3 = Weltposition
+        // 2. Bodenfläche pro Raum (parallel zu structure.rooms)
+        let roomFloorAreas: [Double] = structure.rooms.map {
+            $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+        }
+        let totalArea = roomFloorAreas.reduce(0, +)
+
+        // 3. 2D-Geometrie für Grundriss (XZ-Projektion, Weltkoordinaten der Struktur)
         func makeWallGeo(_ t: simd_float4x4, _ dimX: Float) -> WallGeometry2D {
-            let dx: Double = Double(t.columns.0.x)
-            let dz: Double = Double(t.columns.0.z)
-            let len: Double = sqrt(dx*dx + dz*dz)
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
             return WallGeometry2D(
                 cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
-                dirX: len > 1e-6 ? dx/len : Double(1.0),
-                dirZ: len > 1e-6 ? dz/len : Double(0.0),
+                dirX: len > 1e-6 ? dx/len : 1, dirZ: len > 1e-6 ? dz/len : 0,
                 width: Double(dimX)
             )
         }
         func makeOpeningGeo(_ t: simd_float4x4, _ dimX: Float) -> OpeningGeometry2D {
-            let dx: Double = Double(t.columns.0.x)
-            let dz: Double = Double(t.columns.0.z)
-            let len: Double = sqrt(dx*dx + dz*dz)
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
             return OpeningGeometry2D(
                 cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
-                dirX: len > 1e-6 ? dx/len : Double(1.0),
-                dirZ: len > 1e-6 ? dz/len : Double(0.0),
+                dirX: len > 1e-6 ? dx/len : 1, dirZ: len > 1e-6 ? dz/len : 0,
                 width: Double(dimX)
             )
         }
-        let wallGeo   = room.walls.map   { makeWallGeo($0.transform, $0.dimensions.x) }
-        let doorGeo   = room.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
-        let windowGeo = room.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
+        let wallGeos   = structure.walls.map   { makeWallGeo($0.transform, $0.dimensions.x) }
+        let doorGeos   = structure.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
+        let windowGeos = structure.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
 
-        // 2. USDZ speichern – autoreleasepool gibt RoomPlan-Interna früher frei
+        // 4. USDZ — CapturedStructure exportiert alle Räume zusammen
         let usdzURL = folder.appendingPathComponent("scan.usdz")
-        try autoreleasepool {
-            try room.export(to: usdzURL)
+        try autoreleasepool { try structure.export(to: usdzURL) }
+
+        // 5. Raumbezeichnungen — zip mit structure.rooms (Anzahl kann abweichen)
+        let resolvedNames: [String] = (0..<structure.rooms.count).map { i in
+            i < roomNames.count ? roomNames[i] : "Raum \(i + 1)"
         }
 
-        // 3. PDF: Seite 1 = Grundriss, Seite 2 = Maßtabelle
+        // 6. PDF
         let pdfURL = folder.appendingPathComponent("bericht.pdf")
         try FloorPlanRenderer.generateReport(
             wallMeasurements: wallM,
             doorMeasurements: doorM,
             windowMeasurements: windowM,
-            wallGeometry: wallGeo,
-            doorGeometry: doorGeo,
-            windowGeometry: windowGeo,
-            floorAreaM2: floorArea,
+            wallGeometry: wallGeos,
+            doorGeometry: doorGeos,
+            windowGeometry: windowGeos,
+            floorAreaM2: totalArea,
             address: nil,
-            roomNames: roomNames,
+            roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             schadensnummer: schadensnummer,
             date: Date(),
@@ -273,49 +348,145 @@ private extension RoomScanViewController {
             schadensnummer: schadensnummer,
             date: Date(),
             relativeFolderPath: relativePath,
-            wallCount: room.walls.count,
-            doorCount: room.doors.count,
-            windowCount: room.windows.count,
-            objectCount: room.objects.count,
-            floorAreaM2: floorArea,
+            wallCount: structure.walls.count,
+            doorCount: structure.doors.count,
+            windowCount: structure.windows.count,
+            objectCount: structure.objects.count,
+            floorAreaM2: totalArea,
             wallMeasurements: wallM,
             doorMeasurements: doorM,
             windowMeasurements: windowM,
-            wallGeometry: wallGeo,
-            doorGeometry: doorGeo,
-            windowGeometry: windowGeo,
+            wallGeometry: wallGeos,
+            doorGeometry: doorGeos,
+            windowGeometry: windowGeos,
             address: nil,
-            roomNames: roomNames,
+            roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
             moistureMeasurements: nil
         )
     }
 
-    func showNamingScreen(for room: CapturedRoom) {
-        let count = max(1, room.floors.count)
-        let namingVC = UIHostingController(rootView: RoomNamingView(roomCount: count) { [weak self] names in
-            guard let self = self else { return }
-            self.dismiss(animated: true) {
-                self.loadingOverlay.isHidden = false
-                Task {
-                    do {
-                        let record = try self.saveResults(room: room, roomNames: names)
-                        await MainActor.run {
-                            ScanStore.shared.add(record)
-                            self.onDone(true)
-                        }
-                    } catch {
-                        await MainActor.run {
-                            self.loadingOverlay.isHidden = true
-                            self.showError(error.localizedDescription)
-                        }
-                    }
-                }
+    // MARK: - Fallback: Einzelräume wenn StructureBuilder fehlschlägt
+
+    func saveFallback(rooms: [CapturedRoom], roomNames: [String]) throws -> ScanRecord {
+        guard !rooms.isEmpty else {
+            throw NSError(domain: "InnoviScan", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Keine Räume vorhanden."])
+        }
+
+        let fm = FileManager.default
+        let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let relativePath = "Scans/\(schadensnummer)"
+        let folder = docs.appendingPathComponent(relativePath, isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        // Maße aller Räume zusammenfassen (Größen korrekt; Positionen lokaler Koordinaten)
+        let wallM = rooms.flatMap { room in
+            room.walls.map {
+                WallMeasurement(
+                    width:      (Double($0.dimensions.x) * 100).rounded() / 100,
+                    height:     (Double($0.dimensions.y) * 100).rounded() / 100,
+                    confidence: $0.confidence.germanLabel
+                )
             }
-        })
-        namingVC.isModalInPresentation = true
-        present(namingVC, animated: true)
+        }
+        let doorM = rooms.flatMap { room in
+            room.doors.map {
+                SurfaceMeasurement(
+                    width:  (Double($0.dimensions.x) * 100).rounded() / 100,
+                    height: (Double($0.dimensions.y) * 100).rounded() / 100
+                )
+            }
+        }
+        let windowM = rooms.flatMap { room in
+            room.windows.map {
+                SurfaceMeasurement(
+                    width:  (Double($0.dimensions.x) * 100).rounded() / 100,
+                    height: (Double($0.dimensions.y) * 100).rounded() / 100
+                )
+            }
+        }
+
+        let roomFloorAreas: [Double] = rooms.map {
+            $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+        }
+        let totalArea = roomFloorAreas.reduce(0, +)
+
+        // 2D-Geometrie nur vom ersten Raum (kein gemeinsames Koordinatensystem ohne StructureBuilder)
+        let firstRoom = rooms[0]
+        func makeWallGeo(_ t: simd_float4x4, _ dimX: Float) -> WallGeometry2D {
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
+            return WallGeometry2D(
+                cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                dirX: len > 1e-6 ? dx/len : 1, dirZ: len > 1e-6 ? dz/len : 0,
+                width: Double(dimX)
+            )
+        }
+        func makeOpeningGeo(_ t: simd_float4x4, _ dimX: Float) -> OpeningGeometry2D {
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
+            return OpeningGeometry2D(
+                cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                dirX: len > 1e-6 ? dx/len : 1, dirZ: len > 1e-6 ? dz/len : 0,
+                width: Double(dimX)
+            )
+        }
+        let wallGeos   = firstRoom.walls.map   { makeWallGeo($0.transform, $0.dimensions.x) }
+        let doorGeos   = firstRoom.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
+        let windowGeos = firstRoom.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
+
+        // USDZ vom ersten Raum
+        let usdzURL = folder.appendingPathComponent("scan.usdz")
+        try autoreleasepool { try firstRoom.export(to: usdzURL) }
+
+        let resolvedNames: [String] = (0..<rooms.count).map { i in
+            i < roomNames.count ? roomNames[i] : "Raum \(i + 1)"
+        }
+
+        let pdfURL = folder.appendingPathComponent("bericht.pdf")
+        try FloorPlanRenderer.generateReport(
+            wallMeasurements: wallM,
+            doorMeasurements: doorM,
+            windowMeasurements: windowM,
+            wallGeometry: wallGeos,
+            doorGeometry: doorGeos,
+            windowGeometry: windowGeos,
+            floorAreaM2: totalArea,
+            address: nil,
+            roomNames: resolvedNames,
+            roomFloorAreas: roomFloorAreas,
+            schadensnummer: schadensnummer,
+            date: Date(),
+            roomPhotos: nil,
+            folderURL: folder,
+            moistureMeasurements: nil,
+            at: pdfURL
+        )
+
+        return ScanRecord(
+            id: UUID(),
+            schadensnummer: schadensnummer,
+            date: Date(),
+            relativeFolderPath: relativePath,
+            wallCount: wallM.count,
+            doorCount: doorM.count,
+            windowCount: windowM.count,
+            objectCount: rooms.flatMap(\.objects).count,
+            floorAreaM2: totalArea,
+            wallMeasurements: wallM,
+            doorMeasurements: doorM,
+            windowMeasurements: windowM,
+            wallGeometry: wallGeos,
+            doorGeometry: doorGeos,
+            windowGeometry: windowGeos,
+            address: nil,
+            roomNames: resolvedNames,
+            roomFloorAreas: roomFloorAreas,
+            roomPhotos: nil,
+            moistureMeasurements: nil
+        )
     }
 
     func showError(_ message: String) {
