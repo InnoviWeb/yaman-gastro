@@ -56,6 +56,17 @@ struct OpeningGeometry2D: Codable {
     let width: Double
 }
 
+/// 2D-Geometrie eines erkannten Objekts (Möbel, Sanitär, …) in der XZ-Ebene.
+struct ObjectGeometry2D: Codable {
+    let cx: Double       // Mittelpunkt X (Meter)
+    let cz: Double       // Mittelpunkt Z (Meter)
+    let dirX: Double     // Normierter Richtungsvektor, X-Komponente
+    let dirZ: Double     // Normierter Richtungsvektor, Z-Komponente
+    let width: Double    // Ausdehnung entlang der Hauptachse (dimensions.x)
+    let depth: Double    // Ausdehnung quer zur Hauptachse (dimensions.z)
+    let label: String    // Deutscher Kurzname z.B. "WC", "Bett"
+}
+
 // MARK: - Feuchtigkeitsmessung
 
 enum MoistureKategorie: String, Codable, CaseIterable {
@@ -101,6 +112,10 @@ struct ScanRecord: Codable, Identifiable {
     let roomPhotos: [String: [String]]?
     /// Feuchtigkeitsmessungen
     let moistureMeasurements: [MoistureMeasurement]?
+    /// Erkannte Objekte im Grundriss (nil bei älteren Scans)
+    let objectGeometry: [ObjectGeometry2D]?
+    /// Manuell korrigierte Wandbreiten (nil = Original-Scan-Daten verwenden)
+    let manualWallMeasurements: [WallMeasurement]?
 
     // Raumhöhe = größte gemessene Wandhöhe (abgeleitet, nicht gespeichert)
     var roomHeightM: Double? { wallMeasurements?.map(\.height).max() }

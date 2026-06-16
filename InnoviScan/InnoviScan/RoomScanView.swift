@@ -316,6 +316,20 @@ private extension RoomScanViewController {
         let wallGeos   = structure.walls.map   { makeWallGeo($0.transform, $0.dimensions.x) }
         let doorGeos   = structure.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
         let windowGeos = structure.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
+        let objectGeos: [ObjectGeometry2D] = structure.objects.map { obj in
+            let t = obj.transform
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
+            return ObjectGeometry2D(
+                cx:    Double(t.columns.3.x),
+                cz:    Double(t.columns.3.z),
+                dirX:  len > 1e-6 ? dx/len : 1,
+                dirZ:  len > 1e-6 ? dz/len : 0,
+                width: Double(obj.dimensions.x),
+                depth: Double(obj.dimensions.z),
+                label: objectLabel(for: obj.category)
+            )
+        }
 
         // 4. USDZ — CapturedStructure exportiert alle Räume zusammen
         let usdzURL = folder.appendingPathComponent("scan.usdz")
@@ -335,6 +349,7 @@ private extension RoomScanViewController {
             wallGeometry: wallGeos,
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
+            objectGeometry: objectGeos,
             floorAreaM2: totalArea,
             address: nil,
             roomNames: resolvedNames,
@@ -367,7 +382,9 @@ private extension RoomScanViewController {
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
-            moistureMeasurements: nil
+            moistureMeasurements: nil,
+            objectGeometry: objectGeos,
+            manualWallMeasurements: nil
         )
     }
 
@@ -440,6 +457,22 @@ private extension RoomScanViewController {
         let wallGeos   = firstRoom.walls.map   { makeWallGeo($0.transform, $0.dimensions.x) }
         let doorGeos   = firstRoom.doors.map   { makeOpeningGeo($0.transform, $0.dimensions.x) }
         let windowGeos = firstRoom.windows.map { makeOpeningGeo($0.transform, $0.dimensions.x) }
+        let objectGeos: [ObjectGeometry2D] = rooms.flatMap { room in
+            room.objects.map { obj in
+                let t = obj.transform
+                let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+                let len = sqrt(dx*dx + dz*dz)
+                return ObjectGeometry2D(
+                    cx:    Double(t.columns.3.x),
+                    cz:    Double(t.columns.3.z),
+                    dirX:  len > 1e-6 ? dx/len : 1,
+                    dirZ:  len > 1e-6 ? dz/len : 0,
+                    width: Double(obj.dimensions.x),
+                    depth: Double(obj.dimensions.z),
+                    label: objectLabel(for: obj.category)
+                )
+            }
+        }
 
         // USDZ vom ersten Raum
         let usdzURL = folder.appendingPathComponent("scan.usdz")
@@ -457,6 +490,7 @@ private extension RoomScanViewController {
             wallGeometry: wallGeos,
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
+            objectGeometry: objectGeos,
             floorAreaM2: totalArea,
             address: nil,
             roomNames: resolvedNames,
@@ -489,7 +523,9 @@ private extension RoomScanViewController {
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
-            moistureMeasurements: nil
+            moistureMeasurements: nil,
+            objectGeometry: objectGeos,
+            manualWallMeasurements: nil
         )
     }
 
@@ -558,6 +594,31 @@ struct RoomNamingView: View {
     }
 }
 
+// MARK: - RoomPlan Object Category → Deutsch
+
+private func objectLabel(for category: CapturedRoom.Object.Category) -> String {
+    switch category {
+    case .toilet:       return "WC"
+    case .bathtub:      return "Wanne"
+    case .sink:         return "Waschb."
+    case .washerDryer:  return "Wsch."
+    case .bed:          return "Bett"
+    case .sofa:         return "Sofa"
+    case .table:        return "Tisch"
+    case .chair:        return "Stuhl"
+    case .television:   return "TV"
+    case .screen:       return "Display"
+    case .refrigerator: return "Kühlschr."
+    case .oven:         return "Ofen"
+    case .stove:        return "Herd"
+    case .dishwasher:   return "Spüler"
+    case .storage:      return "Schrank"
+    case .stairs:       return "Treppe"
+    case .fireplace:    return "Kamin"
+    @unknown default:   return "Obj."
+    }
+}
+
 // MARK: - FloorPlanRenderer
 //
 // Zeichnet einen maßstabsgetreuen 2D-Grundriss aus WallGeometry2D / OpeningGeometry2D.
@@ -579,6 +640,7 @@ struct FloorPlanRenderer {
         wallGeometry: [WallGeometry2D],
         doorGeometry: [OpeningGeometry2D],
         windowGeometry: [OpeningGeometry2D],
+        objectGeometry: [ObjectGeometry2D] = [],
         floorAreaM2: Double,
         address: ScanAddress?,
         roomNames: [String]?,
@@ -618,6 +680,7 @@ struct FloorPlanRenderer {
 
             // Seite 1: Grundriss
             drawPDFPage(context: ctx, walls: wallGeometry, doors: doorGeometry, windows: windowGeometry,
+                        objects: objectGeometry,
                         schadensnummer: schadensnummer, date: date, floorAreaM2: floorAreaM2,
                         address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
                         pageNum: 1, totalPages: totalPages)
@@ -851,6 +914,7 @@ struct FloorPlanRenderer {
         walls: [WallGeometry2D],
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
+        objects: [ObjectGeometry2D] = [],
         schadensnummer: String,
         date: Date,
         floorAreaM2: Double,
@@ -882,6 +946,7 @@ struct FloorPlanRenderer {
         )
         drawFloorPlan(g: g, in: drawRect,
                       walls: walls, doors: doors, windows: windows,
+                      objects: objects,
                       floorAreaM2: floorAreaM2, roomNames: roomNames,
                       roomFloorAreas: roomFloorAreas,
                       etage: address?.etage,
@@ -897,6 +962,7 @@ struct FloorPlanRenderer {
         walls: [WallGeometry2D],
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
+        objects: [ObjectGeometry2D] = [],
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
@@ -913,6 +979,7 @@ struct FloorPlanRenderer {
                            width: size.width - 2*pad,
                            height: size.height - 2*pad),
                 walls: walls, doors: doors, windows: windows,
+                objects: objects,
                 floorAreaM2: floorAreaM2, roomNames: roomNames,
                 roomFloorAreas: roomFloorAreas
             )
@@ -927,6 +994,7 @@ struct FloorPlanRenderer {
         walls: [WallGeometry2D],
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
+        objects: [ObjectGeometry2D] = [],
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
@@ -991,19 +1059,29 @@ struct FloorPlanRenderer {
             ("Etage: \(et)" as NSString).draw(at: CGPoint(x: ox + 4, y: oy + 4), withAttributes: etAttrs)
         }
 
-        // 1. Wände (schwarze, dicke Linien) – zuerst, damit Öffnungen darüber sichtbar sind
-        g.saveGState()
-        g.setStrokeColor(UIColor.black.cgColor)
-        g.setLineWidth(3.5)
+        // 1. Wände — Außenwände (nahe Bounding-Box-Rand) dicker als Innenwände
+        let exteriorThreshold = 0.8
         g.setLineCap(.square)
-        for wall in walls {
-            let hw = wall.width / 2
-            let p1 = cv(wall.cx + hw * wall.dirX, wall.cz + hw * wall.dirZ)
-            let p2 = cv(wall.cx - hw * wall.dirX, wall.cz - hw * wall.dirZ)
-            g.move(to: p1); g.addLine(to: p2)
+        g.setStrokeColor(UIColor.black.cgColor)
+        // Zuerst Innenwände (dünn), dann Außenwände (dick) → Außenwände überdecken Kreuzungen
+        for pass in 0...1 {
+            g.saveGState()
+            for wall in walls {
+                let isExterior = (wall.cx - minX < exteriorThreshold) ||
+                                 (maxX - wall.cx < exteriorThreshold) ||
+                                 (wall.cz - minZ < exteriorThreshold) ||
+                                 (maxZ - wall.cz < exteriorThreshold)
+                let wantExterior = pass == 1
+                guard isExterior == wantExterior else { continue }
+                g.setLineWidth(isExterior ? 5.0 : 2.0)
+                let hw = wall.width / 2
+                let p1 = cv(wall.cx + hw * wall.dirX, wall.cz + hw * wall.dirZ)
+                let p2 = cv(wall.cx - hw * wall.dirX, wall.cz - hw * wall.dirZ)
+                g.move(to: p1); g.addLine(to: p2)
+                g.strokePath()
+            }
+            g.restoreGState()
         }
-        g.strokePath()
-        g.restoreGState()
 
         // 2. Türen (grüne Linie + Viertelbogen als Schwungsymbol)
         g.saveGState()
@@ -1040,7 +1118,47 @@ struct FloorPlanRenderer {
         g.strokePath()
         g.restoreGState()
 
-        // Maßangaben + Wandnummern entlang der Wände (senkrecht versetzt)
+        // 4. Objekte (Möbel, Sanitär) — gestrichelte orange Rechtecke mit Beschriftung
+        if !objects.isEmpty {
+            let objLabelAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 6.5),
+                .foregroundColor: UIColor(red: 0.65, green: 0.35, blue: 0.0, alpha: 1)
+            ]
+            g.saveGState()
+            g.setStrokeColor(UIColor(red: 0.8, green: 0.45, blue: 0.0, alpha: 0.85).cgColor)
+            g.setLineWidth(1.2)
+            g.setLineDash(phase: 0, lengths: [4, 3])
+            for obj in objects {
+                let center = cv(obj.cx, obj.cz)
+                let halfW = CGFloat(obj.width / 2) * scale
+                let halfD = CGFloat(obj.depth / 2) * scale
+                // Hauptachse in Canvas-Space (X wird gespiegelt in cv())
+                let axW = CGPoint(x: -CGFloat(obj.dirX), y: CGFloat(obj.dirZ))
+                let axD = CGPoint(x: -axW.y, y: axW.x)
+                let corner1 = CGPoint(x: center.x + axW.x*halfW + axD.x*halfD,
+                                      y: center.y + axW.y*halfW + axD.y*halfD)
+                let corner2 = CGPoint(x: center.x - axW.x*halfW + axD.x*halfD,
+                                      y: center.y - axW.y*halfW + axD.y*halfD)
+                let corner3 = CGPoint(x: center.x - axW.x*halfW - axD.x*halfD,
+                                      y: center.y - axW.y*halfW - axD.y*halfD)
+                let corner4 = CGPoint(x: center.x + axW.x*halfW - axD.x*halfD,
+                                      y: center.y + axW.y*halfW - axD.y*halfD)
+                g.move(to: corner1)
+                g.addLine(to: corner2)
+                g.addLine(to: corner3)
+                g.addLine(to: corner4)
+                g.closePath()
+                g.strokePath()
+                let lsz = (obj.label as NSString).size(withAttributes: objLabelAttrs)
+                (obj.label as NSString).draw(
+                    at: CGPoint(x: center.x - lsz.width/2, y: center.y - lsz.height/2),
+                    withAttributes: objLabelAttrs
+                )
+            }
+            g.restoreGState()
+        }
+
+        // Maßangaben, Maßpfeile + Wandnummern entlang der Wände
         let dimAttrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 8.5),
             .foregroundColor: UIColor(white: 0.3, alpha: 1)
@@ -1049,27 +1167,66 @@ struct FloorPlanRenderer {
             .font: UIFont.boldSystemFont(ofSize: 7),
             .foregroundColor: UIColor(red: 0.15, green: 0.3, blue: 0.85, alpha: 1)
         ]
+
+        // Hilfsfunktion: gefüllten Pfeilkopf zeichnen (Dreieck, Spitze bei `tip`, zeigt in Richtung `dir`)
+        func drawArrowhead(at tip: CGPoint, direction dir: CGPoint) {
+            let arrowLen: CGFloat = 8
+            let arrowBase: CGFloat = 4
+            let len = sqrt(dir.x * dir.x + dir.y * dir.y)
+            guard len > 0.01 else { return }
+            let ux = dir.x / len, uy = dir.y / len
+            let px = -uy, py = ux
+            let base = CGPoint(x: tip.x - ux * arrowLen, y: tip.y - uy * arrowLen)
+            let left  = CGPoint(x: base.x + px * arrowBase, y: base.y + py * arrowBase)
+            let right = CGPoint(x: base.x - px * arrowBase, y: base.y - py * arrowBase)
+            g.saveGState()
+            g.setFillColor(UIColor(white: 0.3, alpha: 1).cgColor)
+            g.move(to: tip); g.addLine(to: left); g.addLine(to: right); g.closePath()
+            g.fillPath()
+            g.restoreGState()
+        }
+
         for (i, wall) in walls.enumerated() {
             let hw = wall.width / 2
             let p1 = cv(wall.cx + hw * wall.dirX, wall.cz + hw * wall.dirZ)
             let p2 = cv(wall.cx - hw * wall.dirX, wall.cz - hw * wall.dirZ)
             let mid = CGPoint(x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2)
             let ang = atan2(Double(p2.y - p1.y), Double(p2.x - p1.x))
-            let px = CGFloat(-sin(ang)) * 15
-            let py = CGFloat( cos(ang)) * 15
-            // Maßangabe (außen)
+            let perpX = CGFloat(-sin(ang)) * 15
+            let perpY = CGFloat( cos(ang)) * 15
+
+            // Maßlinie (senkrecht versetzt von der Wand)
+            let p1off = CGPoint(x: p1.x + perpX, y: p1.y + perpY)
+            let p2off = CGPoint(x: p2.x + perpX, y: p2.y + perpY)
+
+            g.saveGState()
+            g.setStrokeColor(UIColor(white: 0.45, alpha: 1).cgColor)
+            g.setLineWidth(0.7)
+            g.move(to: p1off); g.addLine(to: p2off)
+            g.move(to: p1); g.addLine(to: p1off)
+            g.move(to: p2); g.addLine(to: p2off)
+            g.strokePath()
+            g.restoreGState()
+
+            drawArrowhead(at: p1off, direction: CGPoint(x: p1off.x - p2off.x, y: p1off.y - p2off.y))
+            drawArrowhead(at: p2off, direction: CGPoint(x: p2off.x - p1off.x, y: p2off.y - p1off.y))
+
+            // Maßzahl über der Maßlinie
             let label = String(format: "%.2f m", wall.width)
                 .replacingOccurrences(of: ".", with: ",")
             let sz = (label as NSString).size(withAttributes: dimAttrs)
             (label as NSString).draw(
-                at: CGPoint(x: mid.x + px - sz.width/2, y: mid.y + py - sz.height/2),
+                at: CGPoint(x: mid.x + perpX - sz.width/2,
+                            y: mid.y + perpY - sz.height/2 - 9),
                 withAttributes: dimAttrs
             )
-            // Wandnummer (innen, passend zur Tabelle)
+
+            // Wandnummer auf der Wandinnenseite
             let numLabel = "\(i + 1)"
             let nsz = (numLabel as NSString).size(withAttributes: numAttrs)
             (numLabel as NSString).draw(
-                at: CGPoint(x: mid.x - px - nsz.width/2, y: mid.y - py - nsz.height/2),
+                at: CGPoint(x: mid.x - perpX - nsz.width/2,
+                            y: mid.y - perpY - nsz.height/2),
                 withAttributes: numAttrs
             )
         }

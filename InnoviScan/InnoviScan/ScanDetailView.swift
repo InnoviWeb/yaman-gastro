@@ -34,6 +34,10 @@ struct ScanDetailView: View {
     @State private var moistureMeasurements: [MoistureMeasurement] = []
     @State private var showMoistureSheet: Bool = false
 
+    // Manuelle Wandmaße
+    @State private var manualWallWidths: [String] = []
+    @State private var showWallEditor: Bool = false
+
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .long
@@ -89,7 +93,7 @@ struct ScanDetailView: View {
                 } header: {
                     Text("Grundriss (Draufsicht)")
                 } footer: {
-                    Text("Schwarz = Wände · Grün = Türen · Blau gestrichelt = Fenster · Seite 1 des PDF-Berichts")
+                    Text("Schwarz = Wände · Grün = Türen · Blau gestrichelt = Fenster · Orange gestrichelt = Objekte · Seite 1 des PDF-Berichts")
                         .font(.caption2)
                 }
             }
@@ -227,6 +231,46 @@ struct ScanDetailView: View {
                 } header: { Text("Fenster") }
             }
 
+            // MARK: Wände bearbeiten (manuelle Korrektur)
+            if let walls = record.wallMeasurements, !walls.isEmpty {
+                Section {
+                    DisclosureGroup("Wandmaße bearbeiten", isExpanded: $showWallEditor) {
+                        ForEach(0..<walls.count, id: \.self) { i in
+                            HStack {
+                                Text("Wand \(i + 1)")
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 60, alignment: .leading)
+                                TextField(
+                                    String(format: "%.2f", walls[i].width).replacingOccurrences(of: ".", with: ","),
+                                    text: Binding(
+                                        get: { i < manualWallWidths.count ? manualWallWidths[i] : "" },
+                                        set: { v in
+                                            if manualWallWidths.count <= i {
+                                                manualWallWidths = walls.map { w in
+                                                    String(format: "%.2f", w.width).replacingOccurrences(of: ".", with: ",")
+                                                }
+                                            }
+                                            if i < manualWallWidths.count {
+                                                manualWallWidths[i] = v
+                                            }
+                                        }
+                                    )
+                                )
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                Text("m")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Wandmaße korrigieren")
+                } footer: {
+                    Text("Geänderte Längen werden im PDF und Grundriss-Vorschau nach 'Speichern & PDF aktualisieren' übernommen.")
+                        .font(.caption2)
+                }
+            }
+
             // MARK: Fotos pro Raum
             if !roomNames.isEmpty {
                 Section {
@@ -332,13 +376,27 @@ struct ScanDetailView: View {
             // Feuchtigkeitsmessungen laden
             moistureMeasurements = record.moistureMeasurements ?? []
 
-            // Grundriss-Vorschau rendern
-            if let walls = record.wallGeometry, !walls.isEmpty {
+            // Manuelle Wandmaße laden
+            if let manual = record.manualWallMeasurements {
+                manualWallWidths = manual.map { w in
+                    String(format: "%.2f", w.width).replacingOccurrences(of: ".", with: ",")
+                }
+            } else if let orig = record.wallMeasurements {
+                manualWallWidths = orig.map { w in
+                    String(format: "%.2f", w.width).replacingOccurrences(of: ".", with: ",")
+                }
+            }
+
+            // Grundriss-Vorschau mit effektiver Geometrie rendern
+            if let _ = record.wallGeometry, !effectiveWallGeometry().isEmpty {
+                let effGeo = effectiveWallGeometry()
+                let objGeo = record.objectGeometry ?? []
                 DispatchQueue.global(qos: .userInitiated).async {
                     let img = FloorPlanRenderer.renderPreviewImage(
-                        walls: walls,
+                        walls: effGeo,
                         doors: record.doorGeometry ?? [],
                         windows: record.windowGeometry ?? [],
+                        objects: objGeo,
                         floorAreaM2: record.floorAreaM2,
                         roomNames: record.roomNames,
                         roomFloorAreas: record.roomFloorAreas
@@ -372,6 +430,33 @@ struct ScanDetailView: View {
             MoistureInputView(nextNummer: moistureMeasurements.count + 1) { measurement in
                 saveMoistureMeasurement(measurement)
             }
+        }
+    }
+
+    /// Effektive Wandmaße: manuelle Korrekturen überschreiben Original-Scan-Daten
+    private func effectiveWallMeasurements() -> [WallMeasurement] {
+        guard !manualWallWidths.isEmpty,
+              let originals = record.wallMeasurements else {
+            return record.wallMeasurements ?? []
+        }
+        return originals.enumerated().map { i, orig in
+            let parsed = i < manualWallWidths.count
+                ? Double(manualWallWidths[i].replacingOccurrences(of: ",", with: "."))
+                : nil
+            let newWidth = parsed.flatMap { $0 > 0 ? $0 : nil } ?? orig.width
+            return WallMeasurement(width: newWidth, height: orig.height, confidence: orig.confidence)
+        }
+    }
+
+    /// Effektive Wandgeometrie: WallGeometry2D.width aus effectiveWallMeasurements() übernehmen
+    private func effectiveWallGeometry() -> [WallGeometry2D] {
+        guard let geos = record.wallGeometry else { return [] }
+        let effM = effectiveWallMeasurements()
+        return geos.enumerated().map { i, geo in
+            let newWidth = i < effM.count ? effM[i].width : geo.width
+            return WallGeometry2D(cx: geo.cx, cz: geo.cz,
+                                  dirX: geo.dirX, dirZ: geo.dirZ,
+                                  width: newWidth)
         }
     }
 
@@ -412,7 +497,9 @@ struct ScanDetailView: View {
             roomNames: record.roomNames,
             roomFloorAreas: record.roomFloorAreas,
             roomPhotos: roomPhotoFileNames,
-            moistureMeasurements: record.moistureMeasurements
+            moistureMeasurements: record.moistureMeasurements,
+            objectGeometry: record.objectGeometry,
+            manualWallMeasurements: record.manualWallMeasurements
         )
         ScanStore.shared.update(updatedRecord)
     }
@@ -439,15 +526,23 @@ struct ScanDetailView: View {
             roomNames: record.roomNames,
             roomFloorAreas: record.roomFloorAreas,
             roomPhotos: roomPhotoFileNames.isEmpty ? record.roomPhotos : roomPhotoFileNames,
-            moistureMeasurements: moistureMeasurements
+            moistureMeasurements: moistureMeasurements,
+            objectGeometry: record.objectGeometry,
+            manualWallMeasurements: record.manualWallMeasurements
         )
         ScanStore.shared.update(updatedRecord)
     }
 
     private func saveKopfdaten() {
         let newAddress = ScanAddress(street: street, zip: zip, city: city, etage: etage)
-
         let resolvedNames = roomNames.isEmpty ? nil : roomNames
+
+        // Manuelle Wandmaße nur speichern wenn sie vom Original abweichen
+        let effM = effectiveWallMeasurements()
+        let origM = record.wallMeasurements ?? []
+        let hasManualChanges = zip(effM, origM).contains { abs($0.width - $1.width) > 0.001 }
+        let manualToSave: [WallMeasurement]? = hasManualChanges ? effM : nil
+
         let updated = ScanRecord(
             id: record.id,
             schadensnummer: record.schadensnummer,
@@ -468,20 +563,25 @@ struct ScanDetailView: View {
             roomNames: resolvedNames,
             roomFloorAreas: record.roomFloorAreas,
             roomPhotos: roomPhotoFileNames.isEmpty ? record.roomPhotos : roomPhotoFileNames,
-            moistureMeasurements: moistureMeasurements.isEmpty ? record.moistureMeasurements : moistureMeasurements
+            moistureMeasurements: moistureMeasurements.isEmpty ? record.moistureMeasurements : moistureMeasurements,
+            objectGeometry: record.objectGeometry,
+            manualWallMeasurements: manualToSave
         )
         ScanStore.shared.update(updated)
 
-        // PDF im Hintergrund neu generieren
-        if let wallGeo = updated.wallGeometry {
+        // PDF + Vorschau mit effektiver Geometrie neu generieren
+        let effGeo = effectiveWallGeometry()
+        let objGeo = record.objectGeometry ?? []
+        if !effGeo.isEmpty {
             DispatchQueue.global(qos: .userInitiated).async {
                 try? FloorPlanRenderer.generateReport(
-                    wallMeasurements: updated.wallMeasurements ?? [],
+                    wallMeasurements: effM,
                     doorMeasurements: updated.doorMeasurements ?? [],
                     windowMeasurements: updated.windowMeasurements ?? [],
-                    wallGeometry: wallGeo,
+                    wallGeometry: effGeo,
                     doorGeometry: updated.doorGeometry ?? [],
                     windowGeometry: updated.windowGeometry ?? [],
+                    objectGeometry: objGeo,
                     floorAreaM2: updated.floorAreaM2,
                     address: newAddress,
                     roomNames: resolvedNames,
@@ -493,6 +593,16 @@ struct ScanDetailView: View {
                     moistureMeasurements: updated.moistureMeasurements,
                     at: updated.pdfURL
                 )
+                let img = FloorPlanRenderer.renderPreviewImage(
+                    walls: effGeo,
+                    doors: updated.doorGeometry ?? [],
+                    windows: updated.windowGeometry ?? [],
+                    objects: objGeo,
+                    floorAreaM2: updated.floorAreaM2,
+                    roomNames: resolvedNames,
+                    roomFloorAreas: updated.roomFloorAreas
+                )
+                DispatchQueue.main.async { floorPlanImage = img }
             }
         }
 
