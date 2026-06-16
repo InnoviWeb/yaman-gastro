@@ -288,7 +288,11 @@ private extension RoomScanViewController {
         let roomFloorAreas: [Double] = structure.rooms.map {
             $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
         }
-        let totalArea = roomFloorAreas.reduce(0, +)
+        var totalArea = roomFloorAreas.reduce(0, +)
+        if totalArea < 0.01 {
+            // Fallback: structure.floors enthält alle Bodenflächen der Gesamtstruktur
+            totalArea = structure.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+        }
 
         // 3. 2D-Geometrie für Grundriss (XZ-Projektion, Weltkoordinaten der Struktur)
         func makeWallGeo(_ t: simd_float4x4, _ dimX: Float) -> WallGeometry2D {
@@ -587,7 +591,15 @@ struct FloorPlanRenderer {
         at url: URL
     ) throws {
         // Gesamtseitenzahl vorab berechnen
-        var totalPages = 2  // Grundriss + Maßtabelle
+        // Maßtabellen-Seitenanzahl schätzen (bei vielen Wänden > 1 Seite)
+        let approxUsableH: CGFloat = 842 - 130 - 42
+        var tableContentH: CGFloat = 118  // Intro: Schadensnummer + Datum + RAUMMAẞE
+        tableContentH += 40 + (wallMeasurements.isEmpty   ? 19 : 22 + CGFloat(wallMeasurements.count)   * 19)
+        tableContentH += 40 + (doorMeasurements.isEmpty   ? 19 : 22 + CGFloat(doorMeasurements.count)   * 19)
+        tableContentH += 40 + (windowMeasurements.isEmpty ? 19 : 22 + CGFloat(windowMeasurements.count) * 19)
+        tableContentH += 30
+        let tablePageCount = max(1, Int(ceil(Double(tableContentH / approxUsableH))))
+        var totalPages = 1 + tablePageCount  // Grundriss + geschätzte Maßtabellen-Seiten
         if let photos = roomPhotos {
             let roomOrder = roomNames ?? Array(photos.keys.sorted())
             for roomName in roomOrder {
@@ -610,13 +622,15 @@ struct FloorPlanRenderer {
                         address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
                         pageNum: 1, totalPages: totalPages)
 
-            // Seite 2: Maßtabelle
-            ctx.beginPage()
-            let g = ctx.cgContext
+            // Seite 2+: Maßtabelle (automatischer Seitenumbruch bei Überlauf)
+            var currentPage = 2
 
-            let headerH = drawKRAFTHeader(g: g, pageW: 595, schadensnummer: schadensnummer,
-                                          date: date, address: address, roomNames: roomNames,
-                                          floorAreaM2: floorAreaM2)
+            ctx.beginPage()
+            var tblG = ctx.cgContext
+
+            var tblHH = drawKRAFTHeader(g: tblG, pageW: 595, schadensnummer: schadensnummer,
+                                        date: date, address: address, roomNames: roomNames,
+                                        floorAreaM2: floorAreaM2)
 
             let sectionAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: UIColor.systemBlue]
             let boldAttrs:    [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12), .foregroundColor: UIColor.black]
@@ -626,73 +640,102 @@ struct FloorPlanRenderer {
             formatter.dateStyle = .long; formatter.timeStyle = .short
             formatter.locale = Locale(identifier: "de_DE")
 
-            var y: CGFloat = headerH + 14
+            var ty: CGFloat = tblHH + 14
+            let pageBottom: CGFloat = 842 - 46  // Sicherheitsabstand zum Footer
 
-            func text(_ s: String, x: CGFloat = 40, attrs: [NSAttributedString.Key: Any] = bodyAttrs) {
-                s.draw(at: CGPoint(x: x, y: y), withAttributes: attrs)
+            // Neue Seite innerhalb der Maßtabelle
+            func tblNewPage() {
+                drawFooter(g: tblG, pageW: 595, y: 842 - 28, pageNum: currentPage, totalPages: totalPages)
+                currentPage += 1
+                ctx.beginPage()
+                tblG = ctx.cgContext
+                tblHH = drawKRAFTHeader(g: tblG, pageW: 595, schadensnummer: schadensnummer,
+                                         date: date, address: address, roomNames: roomNames,
+                                         floorAreaM2: floorAreaM2)
+                ty = tblHH + 14
             }
-            func nl(_ dy: CGFloat = 20) { y += dy }
 
-            text("Schadensnummer:", attrs: boldAttrs); text(schadensnummer, x: 200); nl()
-            text("Datum / Uhrzeit:", attrs: boldAttrs); text(formatter.string(from: date), x: 200); nl(28)
-
-            text("RAUMMASZE", attrs: sectionAttrs); nl(20)
-            let areaText = floorAreaM2 > 0 ? String(format: "%.2f m²", floorAreaM2) : "–"
-            text("Bodenfläche:", attrs: boldAttrs); text(areaText, x: 200); nl()
-            if let h = wallMeasurements.map(\.height).max() {
-                text("Raumhöhe:", attrs: boldAttrs); text(String(format: "%.2f m", h), x: 200); nl()
+            func ttext(_ s: String, x: CGFloat = 40, attrs: [NSAttributedString.Key: Any] = bodyAttrs) {
+                s.draw(at: CGPoint(x: x, y: ty), withAttributes: attrs)
             }
-            nl(10)
+            func tnl(_ dy: CGFloat = 20) { ty += dy }
+            func ensure(_ needed: CGFloat) { if ty + needed > pageBottom { tblNewPage() } }
 
             func tableHeader(_ cols: [(String, CGFloat)]) {
-                g.setStrokeColor(UIColor.lightGray.cgColor); g.setLineWidth(0.5)
-                g.move(to: CGPoint(x: 40, y: y + 18)); g.addLine(to: CGPoint(x: 555, y: y + 18)); g.strokePath()
-                for (title, x) in cols { title.draw(at: CGPoint(x: x, y: y), withAttributes: boldAttrs) }
-                nl(22)
+                tblG.setStrokeColor(UIColor.lightGray.cgColor); tblG.setLineWidth(0.5)
+                tblG.move(to: CGPoint(x: 40, y: ty + 18)); tblG.addLine(to: CGPoint(x: 555, y: ty + 18)); tblG.strokePath()
+                for (title, x) in cols { title.draw(at: CGPoint(x: x, y: ty), withAttributes: boldAttrs) }
+                tnl(22)
             }
             func tableRow(_ cols: [(String, CGFloat)]) {
-                for (val, x) in cols { val.draw(at: CGPoint(x: x, y: y), withAttributes: bodyAttrs) }
-                nl(19)
+                ensure(19)
+                for (val, x) in cols { val.draw(at: CGPoint(x: x, y: ty), withAttributes: bodyAttrs) }
+                tnl(19)
             }
 
-            text("WÄNDE  (\(wallMeasurements.count))", attrs: sectionAttrs); nl(20)
-            if wallMeasurements.isEmpty { text("Keine Wände erkannt.", attrs: bodyAttrs); nl() } else {
-                tableHeader([("Nr.", 40), ("Länge", 90), ("Höhe", 200)])
+            ttext("Schadensnummer:", attrs: boldAttrs); ttext(schadensnummer, x: 200); tnl()
+            ttext("Datum / Uhrzeit:", attrs: boldAttrs); ttext(formatter.string(from: date), x: 200); tnl(28)
+
+            ttext("RAUMMAẞE", attrs: sectionAttrs); tnl(20)  // Fix 4: korrekte Schreibweise
+            let areaText = floorAreaM2 > 0 ? String(format: "%.2f m²", floorAreaM2) : "–"
+            ttext("Bodenfläche:", attrs: boldAttrs); ttext(areaText, x: 200); tnl()
+            if let h = wallMeasurements.map(\.height).max() {
+                ttext("Raumhöhe:", attrs: boldAttrs); ttext(String(format: "%.2f m", h), x: 200); tnl()
+            }
+            tnl(10)
+
+            ensure(80)  // Section-Titel + Tabellenkopf + min. 1 Zeile
+            ttext("WÄNDE  (\(wallMeasurements.count))", attrs: sectionAttrs); tnl(20)
+            if wallMeasurements.isEmpty {
+                ttext("Keine Wände erkannt.", attrs: bodyAttrs); tnl()
+            } else {
+                // Fix 5: neue Spalte "Fläche (m²)" = Länge × Höhe
+                tableHeader([("Nr.", 40), ("Länge", 90), ("Höhe", 185), ("Fläche (m²)", 290)])
                 for (i, w) in wallMeasurements.enumerated() {
-                    tableRow([("\(i+1)", 40), (String(format:"%.2f m", w.width), 90),
-                              (String(format:"%.2f m", w.height), 200)])
+                    let area = (w.width * w.height * 100).rounded() / 100
+                    tableRow([("\(i+1)", 40), (String(format: "%.2f m", w.width), 90),
+                              (String(format: "%.2f m", w.height), 185),
+                              (String(format: "%.2f", area), 290)])
                 }
             }
-            nl(10)
+            tnl(10)
 
-            text("TÜREN  (\(doorMeasurements.count))", attrs: sectionAttrs); nl(20)
-            if doorMeasurements.isEmpty { text("Keine Türen erkannt.", attrs: bodyAttrs); nl() } else {
+            ensure(80)
+            ttext("TÜREN  (\(doorMeasurements.count))", attrs: sectionAttrs); tnl(20)
+            if doorMeasurements.isEmpty {
+                ttext("Keine Türen erkannt.", attrs: bodyAttrs); tnl()
+            } else {
                 tableHeader([("Nr.", 40), ("Breite", 90), ("Höhe", 200)])
                 for (i, d) in doorMeasurements.enumerated() {
-                    tableRow([("\(i+1)", 40), (String(format:"%.2f m", d.width), 90), (String(format:"%.2f m", d.height), 200)])
+                    tableRow([("\(i+1)", 40), (String(format: "%.2f m", d.width), 90),
+                              (String(format: "%.2f m", d.height), 200)])
                 }
             }
-            nl(10)
+            tnl(10)
 
-            text("FENSTER  (\(windowMeasurements.count))", attrs: sectionAttrs); nl(20)
-            if windowMeasurements.isEmpty { text("Keine Fenster erkannt.", attrs: bodyAttrs); nl() } else {
+            ensure(80)
+            ttext("FENSTER  (\(windowMeasurements.count))", attrs: sectionAttrs); tnl(20)
+            if windowMeasurements.isEmpty {
+                ttext("Keine Fenster erkannt.", attrs: bodyAttrs); tnl()
+            } else {
                 tableHeader([("Nr.", 40), ("Breite", 90), ("Höhe", 200)])
                 for (i, w) in windowMeasurements.enumerated() {
-                    tableRow([("\(i+1)", 40), (String(format:"%.2f m", w.width), 90), (String(format:"%.2f m", w.height), 200)])
+                    tableRow([("\(i+1)", 40), (String(format: "%.2f m", w.width), 90),
+                              (String(format: "%.2f m", w.height), 200)])
                 }
             }
-            nl(16)
+            tnl(16)
 
-            g.setStrokeColor(UIColor.lightGray.cgColor)
-            g.move(to: CGPoint(x: 40, y: y)); g.addLine(to: CGPoint(x: 555, y: y)); g.strokePath()
-            nl(8)
-            text("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit InnoviScan", attrs: bodyAttrs)
+            ensure(30)
+            tblG.setStrokeColor(UIColor.lightGray.cgColor)
+            tblG.move(to: CGPoint(x: 40, y: ty)); tblG.addLine(to: CGPoint(x: 555, y: ty)); tblG.strokePath()
+            tnl(8)
+            ttext("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit InnoviScan", attrs: bodyAttrs)
 
-            drawFooter(g: g, pageW: 595, y: 842 - 28, pageNum: 2, totalPages: totalPages)
+            drawFooter(g: tblG, pageW: 595, y: 842 - 28, pageNum: currentPage, totalPages: totalPages)
 
             // Seite 3+: Fotos pro Raum (nur wenn vorhanden)
             // Bilder werden einzeln in autoreleasepool geladen, gezeichnet und sofort freigegeben.
-            var currentPage = 2
             if let photos = roomPhotos, !photos.isEmpty {
                 let roomOrder = roomNames ?? Array(photos.keys.sorted())
                 for roomName in roomOrder {
@@ -997,12 +1040,16 @@ struct FloorPlanRenderer {
         g.strokePath()
         g.restoreGState()
 
-        // Maßangaben entlang der Wände (senkrecht versetzt)
+        // Maßangaben + Wandnummern entlang der Wände (senkrecht versetzt)
         let dimAttrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 8.5),
             .foregroundColor: UIColor(white: 0.3, alpha: 1)
         ]
-        for wall in walls {
+        let numAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 7),
+            .foregroundColor: UIColor(red: 0.15, green: 0.3, blue: 0.85, alpha: 1)
+        ]
+        for (i, wall) in walls.enumerated() {
             let hw = wall.width / 2
             let p1 = cv(wall.cx + hw * wall.dirX, wall.cz + hw * wall.dirZ)
             let p2 = cv(wall.cx - hw * wall.dirX, wall.cz - hw * wall.dirZ)
@@ -1010,6 +1057,7 @@ struct FloorPlanRenderer {
             let ang = atan2(Double(p2.y - p1.y), Double(p2.x - p1.x))
             let px = CGFloat(-sin(ang)) * 15
             let py = CGFloat( cos(ang)) * 15
+            // Maßangabe (außen)
             let label = String(format: "%.2f m", wall.width)
                 .replacingOccurrences(of: ".", with: ",")
             let sz = (label as NSString).size(withAttributes: dimAttrs)
@@ -1017,10 +1065,18 @@ struct FloorPlanRenderer {
                 at: CGPoint(x: mid.x + px - sz.width/2, y: mid.y + py - sz.height/2),
                 withAttributes: dimAttrs
             )
+            // Wandnummer (innen, passend zur Tabelle)
+            let numLabel = "\(i + 1)"
+            let nsz = (numLabel as NSString).size(withAttributes: numAttrs)
+            (numLabel as NSString).draw(
+                at: CGPoint(x: mid.x - px - nsz.width/2, y: mid.y - py - nsz.height/2),
+                withAttributes: numAttrs
+            )
         }
 
         // Raumname + Fläche + Abmessungen in der Raummitte
-        if floorAreaM2 > 0.01 {
+        let hasRoomNames = !(roomNames?.filter { !$0.isEmpty }.isEmpty ?? true)
+        if floorAreaM2 > 0.01 || hasRoomNames {
             let ps = NSMutableParagraphStyle(); ps.alignment = .center
             let roomLabelAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 10),
@@ -1070,12 +1126,17 @@ struct FloorPlanRenderer {
             // Ticks + Labels
             for m in barMeters {
                 let tx = bx + CGFloat(m) * scale
-                g.move(to: CGPoint(x: tx, y: by - 5))
+                // Langer Tick nur bei vollen Metern, kurzer Tick bei 0,5-Werten
+                let tickLen: CGFloat = m.truncatingRemainder(dividingBy: 1) == 0 ? 6 : 4
+                g.move(to: CGPoint(x: tx, y: by - tickLen))
                 g.addLine(to: CGPoint(x: tx, y: by + 3))
-                let lbl = m == 0 ? "0" : String(format: m.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", m) + " m"
-                let lsz = (lbl as NSString).size(withAttributes: sAttrs)
-                (lbl as NSString).draw(at: CGPoint(x: tx - lsz.width/2, y: by + 5),
-                                       withAttributes: sAttrs)
+                // Beschriftung nur bei 0 und vollen Metern (kein 0.5, 1.5, 2.5)
+                if m == 0 || m.truncatingRemainder(dividingBy: 1) == 0 {
+                    let lbl = m == 0 ? "0" : String(format: "%.0f m", m)
+                    let lsz = (lbl as NSString).size(withAttributes: sAttrs)
+                    (lbl as NSString).draw(at: CGPoint(x: tx - lsz.width/2, y: by + 5),
+                                           withAttributes: sAttrs)
+                }
             }
             g.strokePath()
             g.restoreGState()
