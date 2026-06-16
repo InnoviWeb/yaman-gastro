@@ -284,14 +284,28 @@ private extension RoomScanViewController {
             )
         }
 
-        // 2. Bodenfläche pro Raum (parallel zu structure.rooms)
-        let roomFloorAreas: [Double] = structure.rooms.map {
+        // 2. Bodenfläche pro Raum (parallel zu structure.rooms / capturedRooms)
+        let structureRoomAreas: [Double] = structure.rooms.map {
             $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
         }
+        // Wenn StructureBuilder keine Bodenflächen liefert → aus Einzelraum-Scans
+        let roomFloorAreas: [Double] = structureRoomAreas.allSatisfy({ $0 < 0.01 })
+            ? capturedRooms.map { $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) } }
+            : structureRoomAreas
         var totalArea = roomFloorAreas.reduce(0, +)
         if totalArea < 0.01 {
-            // Fallback: structure.floors enthält alle Bodenflächen der Gesamtstruktur
             totalArea = structure.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+        }
+
+        // 2b. Raum-Mittelpunkte aus Bodenflächen-Transforms
+        let roomCentroids: [ScanCentroid] = structure.rooms.map { room in
+            let centers = room.floors.map {
+                (Double($0.transform.columns.3.x), Double($0.transform.columns.3.z))
+            }
+            guard !centers.isEmpty else { return ScanCentroid(cx: 0, cz: 0) }
+            let cx = centers.map(\.0).reduce(0, +) / Double(centers.count)
+            let cz = centers.map(\.1).reduce(0, +) / Double(centers.count)
+            return ScanCentroid(cx: cx, cz: cz)
         }
 
         // 3. 2D-Geometrie für Grundriss (XZ-Projektion, Weltkoordinaten der Struktur)
@@ -350,6 +364,7 @@ private extension RoomScanViewController {
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
             objectGeometry: objectGeos,
+            roomCentroids: roomCentroids,
             floorAreaM2: totalArea,
             address: nil,
             roomNames: resolvedNames,
@@ -384,7 +399,8 @@ private extension RoomScanViewController {
             roomPhotos: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
-            manualWallMeasurements: nil
+            manualWallMeasurements: nil,
+            roomCentroids: roomCentroids
         )
     }
 
@@ -473,6 +489,16 @@ private extension RoomScanViewController {
                 )
             }
         }
+        // Raum-Mittelpunkte aus Bodenflächen der Einzelräume
+        let roomCentroids: [ScanCentroid] = rooms.map { room in
+            let centers = room.floors.map {
+                (Double($0.transform.columns.3.x), Double($0.transform.columns.3.z))
+            }
+            guard !centers.isEmpty else { return ScanCentroid(cx: 0, cz: 0) }
+            let cx = centers.map(\.0).reduce(0, +) / Double(centers.count)
+            let cz = centers.map(\.1).reduce(0, +) / Double(centers.count)
+            return ScanCentroid(cx: cx, cz: cz)
+        }
 
         // USDZ vom ersten Raum
         let usdzURL = folder.appendingPathComponent("scan.usdz")
@@ -491,6 +517,7 @@ private extension RoomScanViewController {
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
             objectGeometry: objectGeos,
+            roomCentroids: roomCentroids,
             floorAreaM2: totalArea,
             address: nil,
             roomNames: resolvedNames,
@@ -525,7 +552,8 @@ private extension RoomScanViewController {
             roomPhotos: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
-            manualWallMeasurements: nil
+            manualWallMeasurements: nil,
+            roomCentroids: roomCentroids
         )
     }
 
@@ -641,6 +669,7 @@ struct FloorPlanRenderer {
         doorGeometry: [OpeningGeometry2D],
         windowGeometry: [OpeningGeometry2D],
         objectGeometry: [ObjectGeometry2D] = [],
+        roomCentroids: [ScanCentroid] = [],
         floorAreaM2: Double,
         address: ScanAddress?,
         roomNames: [String]?,
@@ -652,15 +681,13 @@ struct FloorPlanRenderer {
         moistureMeasurements: [MoistureMeasurement]?,
         at url: URL
     ) throws {
-        // Gesamtseitenzahl vorab berechnen
-        // Maßtabellen-Seitenanzahl schätzen (bei vielen Wänden > 1 Seite)
-        let approxUsableH: CGFloat = 842 - 130 - 42
-        var tableContentH: CGFloat = 118  // Intro: Schadensnummer + Datum + RAUMMAẞE
-        tableContentH += 40 + (wallMeasurements.isEmpty   ? 19 : 22 + CGFloat(wallMeasurements.count)   * 19)
-        tableContentH += 40 + (doorMeasurements.isEmpty   ? 19 : 22 + CGFloat(doorMeasurements.count)   * 19)
-        tableContentH += 40 + (windowMeasurements.isEmpty ? 19 : 22 + CGFloat(windowMeasurements.count) * 19)
-        tableContentH += 30
-        let tablePageCount = max(1, Int(ceil(Double(tableContentH / approxUsableH))))
+        // Gesamtseitenzahl exakt berechnen (Simulation der Tabellenseiten)
+        let tablePageCount = simulateTablePageCount(
+            wallMeasurements: wallMeasurements,
+            doorMeasurements: doorMeasurements,
+            windowMeasurements: windowMeasurements,
+            address: address, roomNames: roomNames, floorAreaM2: floorAreaM2
+        )
         var totalPages = 1 + tablePageCount  // Grundriss + geschätzte Maßtabellen-Seiten
         if let photos = roomPhotos {
             let roomOrder = roomNames ?? Array(photos.keys.sorted())
@@ -680,7 +707,7 @@ struct FloorPlanRenderer {
 
             // Seite 1: Grundriss
             drawPDFPage(context: ctx, walls: wallGeometry, doors: doorGeometry, windows: windowGeometry,
-                        objects: objectGeometry,
+                        objects: objectGeometry, roomCentroids: roomCentroids,
                         schadensnummer: schadensnummer, date: date, floorAreaM2: floorAreaM2,
                         address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
                         pageNum: 1, totalPages: totalPages)
@@ -915,6 +942,7 @@ struct FloorPlanRenderer {
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
         objects: [ObjectGeometry2D] = [],
+        roomCentroids: [ScanCentroid] = [],
         schadensnummer: String,
         date: Date,
         floorAreaM2: Double,
@@ -947,6 +975,7 @@ struct FloorPlanRenderer {
         drawFloorPlan(g: g, in: drawRect,
                       walls: walls, doors: doors, windows: windows,
                       objects: objects,
+                      roomCentroids: roomCentroids,
                       floorAreaM2: floorAreaM2, roomNames: roomNames,
                       roomFloorAreas: roomFloorAreas,
                       etage: address?.etage,
@@ -963,6 +992,7 @@ struct FloorPlanRenderer {
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
         objects: [ObjectGeometry2D] = [],
+        roomCentroids: [ScanCentroid] = [],
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
@@ -980,6 +1010,7 @@ struct FloorPlanRenderer {
                            height: size.height - 2*pad),
                 walls: walls, doors: doors, windows: windows,
                 objects: objects,
+                roomCentroids: roomCentroids,
                 floorAreaM2: floorAreaM2, roomNames: roomNames,
                 roomFloorAreas: roomFloorAreas
             )
@@ -995,6 +1026,7 @@ struct FloorPlanRenderer {
         doors: [OpeningGeometry2D],
         windows: [OpeningGeometry2D],
         objects: [ObjectGeometry2D] = [],
+        roomCentroids: [ScanCentroid] = [],
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
@@ -1012,17 +1044,34 @@ struct FloorPlanRenderer {
             return
         }
 
-        // Bounding Box aller Wandendpunkte (Weltkoordinaten)
+        // Rotation: längste Wand horizontal ausrichten
+        let longestWall = walls.max(by: { $0.width < $1.width })
+        var rotAngle: Double = 0
+        if let lw = longestWall {
+            rotAngle = -atan2(lw.dirZ, lw.dirX)
+            // Auf ±90° normieren (Wand ist in beide Richtungen gleich)
+            if rotAngle >  Double.pi / 2 { rotAngle -= Double.pi }
+            if rotAngle <= -Double.pi / 2 { rotAngle += Double.pi }
+        }
+        let cosR = cos(rotAngle), sinR = sin(rotAngle)
+        // Rotation: Weltkoordinate → gedrehte Koordinate
+        func rotW(_ wx: Double, _ wz: Double) -> (Double, Double) {
+            (wx * cosR - wz * sinR, wx * sinR + wz * cosR)
+        }
+
+        // Bounding Box nach Rotation
         var allX: [Double] = [], allZ: [Double] = []
         for w in walls {
             let hw = w.width / 2
-            allX += [w.cx + hw * w.dirX, w.cx - hw * w.dirX]
-            allZ += [w.cz + hw * w.dirZ, w.cz - hw * w.dirZ]
+            let (x1, z1) = rotW(w.cx + hw * w.dirX, w.cz + hw * w.dirZ)
+            let (x2, z2) = rotW(w.cx - hw * w.dirX, w.cz - hw * w.dirZ)
+            allX += [x1, x2]; allZ += [z1, z2]
         }
         for o in doors + windows {
             let hw = o.width / 2
-            allX += [o.cx + hw * o.dirX, o.cx - hw * o.dirX]
-            allZ += [o.cz + hw * o.dirZ, o.cz - hw * o.dirZ]
+            let (x1, z1) = rotW(o.cx + hw * o.dirX, o.cz + hw * o.dirZ)
+            let (x2, z2) = rotW(o.cx - hw * o.dirX, o.cz - hw * o.dirZ)
+            allX += [x1, x2]; allZ += [z1, z2]
         }
         guard let minX = allX.min(), let maxX = allX.max(),
               let minZ = allZ.min(), let maxZ = allZ.max() else { return }
@@ -1040,12 +1089,11 @@ struct FloorPlanRenderer {
         let ox = rect.minX + labelPad + (rect.width  - 2*labelPad - scaledW) / 2
         let oy = rect.minY + labelPad + (rect.height - 2*labelPad - scaledH) / 2
 
-        // Welt (XZ) → Canvas
-        // X wird gespiegelt (wie im RoomPlan-2D-Standard: posX = -worldX),
-        // damit die Raumgeometrie die korrekte Händigkeit bekommt.
+        // Welt (XZ) → Canvas: erst rotieren, dann X-spiegeln für korrekte 2D-Händigkeit
         func cv(_ wx: Double, _ wz: Double) -> CGPoint {
-            CGPoint(x: ox + CGFloat(maxX - wx) * scale,
-                    y: oy + CGFloat(wz - minZ) * scale)
+            let (rx, rz) = rotW(wx, wz)
+            return CGPoint(x: ox + CGFloat(maxX - rx) * scale,
+                           y: oy + CGFloat(rz - minZ) * scale)
         }
 
         drawGrid(g: g, rect: CGRect(x: ox, y: oy, width: scaledW, height: scaledH))
@@ -1067,10 +1115,11 @@ struct FloorPlanRenderer {
         for pass in 0...1 {
             g.saveGState()
             for wall in walls {
-                let isExterior = (wall.cx - minX < exteriorThreshold) ||
-                                 (maxX - wall.cx < exteriorThreshold) ||
-                                 (wall.cz - minZ < exteriorThreshold) ||
-                                 (maxZ - wall.cz < exteriorThreshold)
+                let (rcx, rcz) = rotW(wall.cx, wall.cz)
+                let isExterior = (rcx - minX < exteriorThreshold) ||
+                                 (maxX - rcx < exteriorThreshold) ||
+                                 (rcz - minZ < exteriorThreshold) ||
+                                 (maxZ - rcz < exteriorThreshold)
                 let wantExterior = pass == 1
                 guard isExterior == wantExterior else { continue }
                 g.setLineWidth(isExterior ? 5.0 : 2.0)
@@ -1132,8 +1181,9 @@ struct FloorPlanRenderer {
                 let center = cv(obj.cx, obj.cz)
                 let halfW = CGFloat(obj.width / 2) * scale
                 let halfD = CGFloat(obj.depth / 2) * scale
-                // Hauptachse in Canvas-Space (X wird gespiegelt in cv())
-                let axW = CGPoint(x: -CGFloat(obj.dirX), y: CGFloat(obj.dirZ))
+                // Richtungsvektor rotieren, dann in Canvas-Space (X gespiegelt)
+                let (rdx, rdz) = rotW(obj.dirX, obj.dirZ)
+                let axW = CGPoint(x: -CGFloat(rdx), y: CGFloat(rdz))
                 let axD = CGPoint(x: -axW.y, y: axW.x)
                 let corner1 = CGPoint(x: center.x + axW.x*halfW + axD.x*halfD,
                                       y: center.y + axW.y*halfW + axD.y*halfD)
@@ -1231,7 +1281,7 @@ struct FloorPlanRenderer {
             )
         }
 
-        // Raumname + Fläche + Abmessungen in der Raummitte
+        // Raumname + Fläche — bei Mehrraumgebäude an Raum-Mittelpunkt, sonst in der Grundriss-Mitte
         let hasRoomNames = !(roomNames?.filter { !$0.isEmpty }.isEmpty ?? true)
         if floorAreaM2 > 0.01 || hasRoomNames {
             let ps = NSMutableParagraphStyle(); ps.alignment = .center
@@ -1242,26 +1292,49 @@ struct FloorPlanRenderer {
             ]
             let names = roomNames?.filter { !$0.isEmpty } ?? []
             let areas = roomFloorAreas ?? []
-            var lines: [String] = []
-            let dimStr = String(format: "(%.2f × %.2f m)", worldW, worldH)
-                .replacingOccurrences(of: ".", with: ",")
-            for (i, name) in names.enumerated() {
-                let areaStr = i < areas.count
-                    ? String(format: "%.2f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
-                    : String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
-                lines.append("\(name)  \(areaStr)  \(dimStr)")
+
+            let usePerRoomLabels = !roomCentroids.isEmpty && roomCentroids.count == names.count
+                && names.count > 0
+
+            if usePerRoomLabels {
+                // Mehrraumgebäude: Raumname + m² am jeweiligen Raum-Mittelpunkt
+                for (i, name) in names.enumerated() {
+                    let c = roomCentroids[i]
+                    guard c.cx != 0 || c.cz != 0 else { continue }
+                    let pt = cv(c.cx, c.cz)
+                    let areaStr = i < areas.count && areas[i] > 0.01
+                        ? String(format: "%.1f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
+                        : ""
+                    let text = [name, areaStr].filter { !$0.isEmpty }.joined(separator: "\n")
+                    let lw: CGFloat = 120, lh: CGFloat = CGFloat(text.components(separatedBy: "\n").count) * 14 + 2
+                    (text as NSString).draw(
+                        in: CGRect(x: pt.x - lw/2, y: pt.y - lh/2, width: lw, height: lh),
+                        withAttributes: roomLabelAttrs
+                    )
+                }
+            } else {
+                // Einzelraum oder kein Centroid → alles in der Grundriss-Mitte
+                var lines: [String] = []
+                let dimStr = String(format: "(%.2f × %.2f m)", worldW, worldH)
+                    .replacingOccurrences(of: ".", with: ",")
+                for (i, name) in names.enumerated() {
+                    let areaStr = i < areas.count
+                        ? String(format: "%.2f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
+                        : String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
+                    lines.append("\(name)  \(areaStr)  \(dimStr)")
+                }
+                if lines.isEmpty {
+                    let areaStr = String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
+                    lines.append("\(areaStr)  \(dimStr)")
+                }
+                let roomLabel = lines.joined(separator: "\n")
+                let lw: CGFloat = 200, lh: CGFloat = CGFloat(lines.count) * 16 + 4
+                (roomLabel as NSString).draw(
+                    in: CGRect(x: ox + scaledW/2 - lw/2, y: oy + scaledH/2 - lh/2,
+                               width: lw, height: lh),
+                    withAttributes: roomLabelAttrs
+                )
             }
-            if lines.isEmpty {
-                let areaStr = String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
-                lines.append("\(areaStr)  \(dimStr)")
-            }
-            let roomLabel = lines.joined(separator: "\n")
-            let lw: CGFloat = 180, lh: CGFloat = CGFloat(lines.count) * 16 + 4
-            (roomLabel as NSString).draw(
-                in: CGRect(x: ox + scaledW/2 - lw/2, y: oy + scaledH/2 - lh/2,
-                           width: lw, height: lh),
-                withAttributes: roomLabelAttrs
-            )
         }
 
         // Maßstabsleiste mit Ticks (0 – 0.5 – 1.0 – 1.5 – 2.0 – 2.5 m) + Maßstabszahl
@@ -1336,6 +1409,59 @@ struct FloorPlanRenderer {
         while y <= rect.maxY + 0.1 { g.move(to: CGPoint(x: rect.minX, y: y)); g.addLine(to: CGPoint(x: rect.maxX, y: y)); y += step }
         g.strokePath()
         g.restoreGState()
+    }
+
+    // MARK: - Seitenanzahl-Simulation (Fix 4)
+
+    /// Schätzt die Kopfzeilen-Höhe basierend auf den Adressfeldern (ohne zu rendern).
+    private static func estimatedHeaderH(
+        address: ScanAddress?, roomNames: [String]?, floorAreaM2: Double
+    ) -> CGFloat {
+        var h: CGFloat = 10
+        let rowH: CGFloat = 27
+        h += rowH  // SCHADENSNUMMER
+        h += rowH  // DATUM / UHRZEIT
+        if let addr = address {
+            if !addr.street.isEmpty || !addr.cityLine.isEmpty { h += rowH }
+            if !addr.etage.isEmpty { h += rowH }
+        }
+        if floorAreaM2 > 0 { h += rowH }
+        if let names = roomNames?.filter({ !$0.isEmpty }), !names.isEmpty { h += rowH }
+        return max(h, 71) + 12  // 71 = Logohöhe-Untergrenze; +12: Trennlinie + Padding
+    }
+
+    /// Simuliert Tabellenumbruch und gibt exakte Seitenzahl zurück.
+    private static func simulateTablePageCount(
+        wallMeasurements: [WallMeasurement],
+        doorMeasurements: [SurfaceMeasurement],
+        windowMeasurements: [SurfaceMeasurement],
+        address: ScanAddress?, roomNames: [String]?, floorAreaM2: Double
+    ) -> Int {
+        let hH = estimatedHeaderH(address: address, roomNames: roomNames, floorAreaM2: floorAreaM2)
+        var ty: CGFloat = hH + 14
+        let bottom: CGFloat = 842 - 46
+        var pages = 1
+        func ensure(_ n: CGFloat) { if ty + n > bottom { pages += 1; ty = hH + 14 } }
+        func tnl(_ d: CGFloat = 20) { ty += d }
+
+        // Schadensnummer + Datum
+        tnl(); tnl(28)
+        // RAUMMAẞE + Bodenfläche + Raumhöhe + Leerzeile
+        tnl(20); tnl()
+        if wallMeasurements.map(\.height).max() != nil { tnl() }
+        tnl(10)
+        // WÄNDE
+        ensure(80); tnl(20)
+        if wallMeasurements.isEmpty { tnl() } else { tnl(22); wallMeasurements.forEach { _ in ensure(19); tnl(19) } }
+        tnl(10)
+        // TÜREN
+        ensure(80); tnl(20)
+        if doorMeasurements.isEmpty { tnl() } else { tnl(22); doorMeasurements.forEach { _ in ensure(19); tnl(19) } }
+        tnl(10)
+        // FENSTER
+        ensure(80); tnl(20)
+        if windowMeasurements.isEmpty { tnl() } else { tnl(22); windowMeasurements.forEach { _ in ensure(19); tnl(19) } }
+        return pages
     }
 
     /// Zeichnet den KRAFT-Briefkopf auf jeder PDF-Seite.

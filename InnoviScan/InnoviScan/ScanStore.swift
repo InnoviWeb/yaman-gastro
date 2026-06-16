@@ -56,6 +56,12 @@ struct OpeningGeometry2D: Codable {
     let width: Double
 }
 
+/// Mittelpunkt eines Raums in der XZ-Ebene (Weltkoordinaten).
+struct ScanCentroid: Codable {
+    let cx: Double
+    let cz: Double
+}
+
 /// 2D-Geometrie eines erkannten Objekts (Möbel, Sanitär, …) in der XZ-Ebene.
 struct ObjectGeometry2D: Codable {
     let cx: Double       // Mittelpunkt X (Meter)
@@ -116,6 +122,8 @@ struct ScanRecord: Codable, Identifiable {
     let objectGeometry: [ObjectGeometry2D]?
     /// Manuell korrigierte Wandbreiten (nil = Original-Scan-Daten verwenden)
     let manualWallMeasurements: [WallMeasurement]?
+    /// Raum-Mittelpunkte für Grundriss-Beschriftung (nil bei älteren Scans)
+    let roomCentroids: [ScanCentroid]?
 
     // Raumhöhe = größte gemessene Wandhöhe (abgeleitet, nicht gespeichert)
     var roomHeightM: Double? { wallMeasurements?.map(\.height).max() }

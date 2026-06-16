@@ -391,12 +391,14 @@ struct ScanDetailView: View {
             if let _ = record.wallGeometry, !effectiveWallGeometry().isEmpty {
                 let effGeo = effectiveWallGeometry()
                 let objGeo = record.objectGeometry ?? []
+                let centroids = record.roomCentroids ?? []
                 DispatchQueue.global(qos: .userInitiated).async {
                     let img = FloorPlanRenderer.renderPreviewImage(
                         walls: effGeo,
                         doors: record.doorGeometry ?? [],
                         windows: record.windowGeometry ?? [],
                         objects: objGeo,
+                        roomCentroids: centroids,
                         floorAreaM2: record.floorAreaM2,
                         roomNames: record.roomNames,
                         roomFloorAreas: record.roomFloorAreas
@@ -499,7 +501,8 @@ struct ScanDetailView: View {
             roomPhotos: roomPhotoFileNames,
             moistureMeasurements: record.moistureMeasurements,
             objectGeometry: record.objectGeometry,
-            manualWallMeasurements: record.manualWallMeasurements
+            manualWallMeasurements: record.manualWallMeasurements,
+            roomCentroids: record.roomCentroids
         )
         ScanStore.shared.update(updatedRecord)
     }
@@ -528,7 +531,8 @@ struct ScanDetailView: View {
             roomPhotos: roomPhotoFileNames.isEmpty ? record.roomPhotos : roomPhotoFileNames,
             moistureMeasurements: moistureMeasurements,
             objectGeometry: record.objectGeometry,
-            manualWallMeasurements: record.manualWallMeasurements
+            manualWallMeasurements: record.manualWallMeasurements,
+            roomCentroids: record.roomCentroids
         )
         ScanStore.shared.update(updatedRecord)
     }
@@ -565,7 +569,8 @@ struct ScanDetailView: View {
             roomPhotos: roomPhotoFileNames.isEmpty ? record.roomPhotos : roomPhotoFileNames,
             moistureMeasurements: moistureMeasurements.isEmpty ? record.moistureMeasurements : moistureMeasurements,
             objectGeometry: record.objectGeometry,
-            manualWallMeasurements: manualToSave
+            manualWallMeasurements: manualToSave,
+            roomCentroids: record.roomCentroids
         )
         ScanStore.shared.update(updated)
 
@@ -574,6 +579,7 @@ struct ScanDetailView: View {
         let objGeo = record.objectGeometry ?? []
         if !effGeo.isEmpty {
             DispatchQueue.global(qos: .userInitiated).async {
+                let centroids = updated.roomCentroids ?? []
                 try? FloorPlanRenderer.generateReport(
                     wallMeasurements: effM,
                     doorMeasurements: updated.doorMeasurements ?? [],
@@ -582,6 +588,7 @@ struct ScanDetailView: View {
                     doorGeometry: updated.doorGeometry ?? [],
                     windowGeometry: updated.windowGeometry ?? [],
                     objectGeometry: objGeo,
+                    roomCentroids: centroids,
                     floorAreaM2: updated.floorAreaM2,
                     address: newAddress,
                     roomNames: resolvedNames,
@@ -598,6 +605,7 @@ struct ScanDetailView: View {
                     doors: updated.doorGeometry ?? [],
                     windows: updated.windowGeometry ?? [],
                     objects: objGeo,
+                    roomCentroids: centroids,
                     floorAreaM2: updated.floorAreaM2,
                     roomNames: resolvedNames,
                     roomFloorAreas: updated.roomFloorAreas
