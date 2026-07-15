@@ -830,6 +830,94 @@ private extension CapturedRoom.Confidence {
     }
 }
 
+// MARK: - Per-Room Naming Sheet
+
+struct RoomNameSheet: View {
+    let roomNumber: Int
+    let suggestedName: String
+    let areaM2: Double
+    let onNextRoom: (String) -> Void
+    let onAllDone:  (String) -> Void
+
+    @State private var name: String = ""
+    @FocusState private var focused: Bool
+
+    private let kraftBlue = Color(red: 0.04, green: 0.52, blue: 1)
+
+    init(roomNumber: Int, suggestedName: String, areaM2: Double,
+         onNextRoom: @escaping (String) -> Void, onAllDone: @escaping (String) -> Void) {
+        self.roomNumber    = roomNumber
+        self.suggestedName = suggestedName
+        self.areaM2        = areaM2
+        self.onNextRoom    = onNextRoom
+        self.onAllDone     = onAllDone
+        self._name = State(initialValue: suggestedName)
+    }
+
+    private var resolvedName: String {
+        let t = name.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? "Raum \(roomNumber)" : t
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        Text("Bezeichnung")
+                        TextField("z.B. Wohnzimmer, Küche…", text: $name)
+                            .multilineTextAlignment(.trailing)
+                            .focused($focused)
+                    }
+                    if areaM2 > 0.01 {
+                        HStack {
+                            Text("Fläche")
+                            Spacer()
+                            Text(String(format: "%.1f m²", areaM2))
+                                .foregroundColor(kraftBlue)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                        }
+                    }
+                } header: {
+                    Text("Raum \(roomNumber)")
+                }
+
+                Section {
+                    Button {
+                        onNextRoom(resolvedName)
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Label("Nächsten Raum scannen", systemImage: "arrow.right.circle.fill")
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                    }
+                    .foregroundColor(kraftBlue)
+
+                    Button {
+                        onAllDone(resolvedName)
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Label("Alle Räume fertig", systemImage: "checkmark.circle.fill")
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                    }
+                    .foregroundColor(.green)
+                }
+            }
+            .navigationTitle("Raum benennen")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.medium])
+        .interactiveDismissDisabled(true)
+    }
+}
+
 // MARK: - Post-Scan Raum-Benennung (Grundriss + Liste)
 
 struct RoomNamingView: View {
