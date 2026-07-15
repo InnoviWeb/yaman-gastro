@@ -12,11 +12,12 @@ import simd
 
 struct RoomScanView: UIViewControllerRepresentable {
     let schadensnummer: String
+    let address: ScanAddress
     @Binding var isPresented: Bool
     var onDone: (Bool) -> Void
 
     func makeUIViewController(context: Context) -> RoomScanViewController {
-        RoomScanViewController(schadensnummer: schadensnummer) { success in
+        RoomScanViewController(schadensnummer: schadensnummer, address: address) { success in
             onDone(success)
             isPresented = false
         }
@@ -29,19 +30,25 @@ struct RoomScanView: UIViewControllerRepresentable {
 
 class RoomScanViewController: UIViewController {
     private let schadensnummer: String
+    private let address: ScanAddress
     private let onDone: (Bool) -> Void
 
     private var roomCaptureView: RoomCaptureView!
     private var stopButton: UIButton!
     private var loadingOverlay: UIView!
     private var loadingLabel: UILabel!
+    private var instructionLabel: UILabel!
     private var isProcessing = false
 
-    private var capturedRooms: [CapturedRoom] = []
-    private var collectedNames: [String] = []
+    private var roomCounter: Int = 1
+    private var counterLabel: UILabel!
+    private var cancelButton: UIButton!
 
-    init(schadensnummer: String, onDone: @escaping (Bool) -> Void) {
+    private var capturedRooms: [CapturedRoom] = []
+
+    init(schadensnummer: String, address: ScanAddress, onDone: @escaping (Bool) -> Void) {
         self.schadensnummer = schadensnummer
+        self.address        = address
         self.onDone         = onDone
         super.init(nibName: nil, bundle: nil)
     }
@@ -61,6 +68,8 @@ class RoomScanViewController: UIViewController {
 
         setupStopButton()
         setupLoadingOverlay()
+        setupInstructionLabel()
+        setupRoomCounter()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -76,9 +85,10 @@ class RoomScanViewController: UIViewController {
     // MARK: - UI Setup
 
     private func setupStopButton() {
+        // Primary: "Raum fertig"
         stopButton = UIButton(type: .system)
         stopButton.setTitle("Raum fertig", for: .normal)
-        stopButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
+        stopButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
         stopButton.backgroundColor = .systemBlue
         stopButton.setTitleColor(.white, for: .normal)
         stopButton.layer.cornerRadius = 12
@@ -86,12 +96,81 @@ class RoomScanViewController: UIViewController {
         stopButton.addTarget(self, action: #selector(roomDone), for: .touchUpInside)
         view.addSubview(stopButton)
 
+        // Secondary: "Scan abbrechen"
+        cancelButton = UIButton(type: .system)
+        cancelButton.setTitle("Scan abbrechen", for: .normal)
+        cancelButton.titleLabel?.font = .systemFont(ofSize: 15)
+        cancelButton.setTitleColor(UIColor.white.withAlphaComponent(0.75), for: .normal)
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.addTarget(self, action: #selector(cancelScan), for: .touchUpInside)
+        view.addSubview(cancelButton)
+
         NSLayoutConstraint.activate([
             stopButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            stopButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            stopButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -52),
             stopButton.widthAnchor.constraint(equalToConstant: 200),
-            stopButton.heightAnchor.constraint(equalToConstant: 50)
+            stopButton.heightAnchor.constraint(equalToConstant: 50),
+
+            cancelButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            cancelButton.topAnchor.constraint(equalTo: stopButton.bottomAnchor, constant: 8),
         ])
+    }
+
+    private func setupInstructionLabel() {
+        instructionLabel = UILabel()
+        instructionLabel.text = "Kamera langsam durch den Raum bewegen"
+        instructionLabel.textColor = .white
+        instructionLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        instructionLabel.textAlignment = .center
+        instructionLabel.numberOfLines = 2
+        instructionLabel.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        instructionLabel.layer.cornerRadius = 10
+        instructionLabel.layer.masksToBounds = true
+        instructionLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(instructionLabel)
+
+        NSLayoutConstraint.activate([
+            instructionLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            instructionLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            instructionLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            instructionLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+            instructionLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
+        ])
+        instructionLabel.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+    }
+
+    private func setupRoomCounter() {
+        counterLabel = UILabel()
+        counterLabel.textColor = .white
+        counterLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        counterLabel.textAlignment = .center
+        counterLabel.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        counterLabel.layer.cornerRadius = 8
+        counterLabel.layer.masksToBounds = true
+        counterLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(counterLabel)
+        NSLayoutConstraint.activate([
+            counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            counterLabel.topAnchor.constraint(equalTo: instructionLabel.bottomAnchor, constant: 8),
+            counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+        ])
+        updateRoomCounter()
+    }
+
+    private func updateRoomCounter() {
+        DispatchQueue.main.async {
+            self.counterLabel.text = "  Raum \(self.roomCounter) wird gescannt  "
+        }
+    }
+
+    private func updateInstruction(_ text: String) {
+        DispatchQueue.main.async {
+            UIView.transition(with: self.instructionLabel,
+                              duration: 0.25, options: .transitionCrossDissolve) {
+                self.instructionLabel.text = "  \(text)  "
+            }
+        }
     }
 
     private func setupLoadingOverlay() {
@@ -130,11 +209,39 @@ class RoomScanViewController: UIViewController {
         stopButton.isEnabled = false
         roomCaptureView.captureSession.stop()
     }
+
+    @objc private func cancelScan() {
+        roomCaptureView.captureSession.stop()
+        onDone(false)
+    }
 }
 
 // MARK: - RoomCaptureSessionDelegate
 
 extension RoomScanViewController: RoomCaptureSessionDelegate {
+
+    func captureSession(_ session: RoomCaptureSession,
+                        didProvide instruction: RoomCaptureSession.Instruction) {
+        let text: String
+        switch instruction {
+        case .normal:
+            text = "Kamera langsam durch den Raum bewegen"
+        case .moveCloseToWall:
+            text = "Näher an die Wand herangehen"
+        case .moveAwayFromWall:
+            text = "Weiter von der Wand entfernen"
+        case .slowDown:
+            text = "Bitte langsamer bewegen"
+        case .turnOnLight:
+            text = "Bitte Licht einschalten"
+        case .lowTexture:
+            text = "Geringe Oberflächentextur – weiter bewegen"
+        @unknown default:
+            text = "Kamera langsam durch den Raum bewegen"
+        }
+        updateInstruction(text)
+    }
+
     func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         guard !isProcessing else { return }
         isProcessing = true
@@ -153,11 +260,15 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
             do {
                 let builder = RoomBuilder(options: [.beautifyObjects])
                 let room = try await builder.capturedRoom(from: data)
+                print("[DIAG] RoomBuilder erfolgreich. Wände: \(room.walls.count), Türen: \(room.doors.count), Objekte: \(room.objects.count)")
                 await MainActor.run {
+                    self.capturedRooms.append(room)
+                    print("[DIAG] capturedRooms.count nach append: \(self.capturedRooms.count)")
                     self.loadingOverlay.isHidden = true
-                    self.showNamingScreen(for: room)
+                    self.runStructureBuilder()
                 }
             } catch {
+                print("[DIAG] RoomBuilder FEHLER: \(error)")
                 await MainActor.run {
                     self.loadingOverlay.isHidden = true
                     self.showError(error.localizedDescription)
@@ -182,44 +293,29 @@ extension RoomScanViewController: RoomCaptureViewDelegate {
 
 private extension RoomScanViewController {
 
-    func startNewScan() {
-        isProcessing = false
-        stopButton.isEnabled = true
-        roomCaptureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
-    }
-
-    func showNamingScreen(for room: CapturedRoom) {
-        // roomCount: 1 — jeder Scan-Durchgang entspricht genau einem Raum
-        let namingVC = UIHostingController(rootView: RoomNamingView(roomCount: 1) { [weak self] names in
-            guard let self = self else { return }
-            let name = names.first ?? "Raum \(self.capturedRooms.count + 1)"
-            self.capturedRooms.append(room)
-            self.collectedNames.append(name)
-            let area = room.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
-            self.dismiss(animated: true) {
-                self.showRoomSummaryAlert(roomName: name, area: area)
-            }
-        })
+    /// Zeigt Benennungs-Screen mit Grundriss-Vorschau und m²-Werten für alle Räume
+    func showNamingScreen(
+        roomCount: Int,
+        previewWalls: [WallGeometry2D] = [],
+        previewDoors: [OpeningGeometry2D] = [],
+        previewWindows: [OpeningGeometry2D] = [],
+        previewCentroids: [ScanCentroid] = [],
+        previewAreas: [Double] = [],
+        onConfirm: @escaping ([String]) -> Void
+    ) {
+        let view = RoomNamingView(
+            roomCount: roomCount,
+            previewWalls: previewWalls,
+            previewDoors: previewDoors,
+            previewWindows: previewWindows,
+            previewCentroids: previewCentroids,
+            roomAreas: previewAreas
+        ) { [weak self] names in
+            self?.dismiss(animated: true) { onConfirm(names) }
+        }
+        let namingVC = UIHostingController(rootView: view)
         namingVC.isModalInPresentation = true
         present(namingVC, animated: true)
-    }
-
-    func showRoomSummaryAlert(roomName: String, area: Double) {
-        let areaStr = String(format: "%.1f", area)
-        let count = capturedRooms.count
-        let plural = count == 1 ? "Raum" : "Räume"
-        let alert = UIAlertController(
-            title: "Raum gespeichert",
-            message: "\(roomName)  ·  \(areaStr) m²\n\n\(count) \(plural) erfasst",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Nächster Raum", style: .default) { _ in
-            self.startNewScan()
-        })
-        alert.addAction(UIAlertAction(title: "Wohnung abschließen", style: .default) { _ in
-            self.runStructureBuilder()
-        })
-        present(alert, animated: true)
     }
 
     func runStructureBuilder() {
@@ -229,25 +325,106 @@ private extension RoomScanViewController {
 
         Task {
             do {
+                print("[DIAG] StructureBuilder startet mit \(capturedRooms.count) CapturedRoom(s)")
                 let builder = StructureBuilder(options: [.beautifyObjects])
                 let structure = try await builder.capturedStructure(from: capturedRooms)
-                let record = try saveResults(structure: structure, roomNames: collectedNames)
+                print("[DIAG] StructureBuilder erfolgreich. structure.rooms.count = \(structure.rooms.count), Wände: \(structure.walls.count), Türen: \(structure.doors.count)")
+
+                // Geometrie für Grundriss-Vorschau im Benennungs-Screen vorberechnen
+                func geoW(_ t: simd_float4x4, _ d: Float) -> WallGeometry2D {
+                    let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+                    let l = sqrt(dx*dx + dz*dz)
+                    return WallGeometry2D(cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                                         dirX: l > 1e-6 ? dx/l : 1, dirZ: l > 1e-6 ? dz/l : 0, width: Double(d))
+                }
+                func geoO(_ t: simd_float4x4, _ d: Float) -> OpeningGeometry2D {
+                    let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+                    let l = sqrt(dx*dx + dz*dz)
+                    return OpeningGeometry2D(cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                                             dirX: l > 1e-6 ? dx/l : 1, dirZ: l > 1e-6 ? dz/l : 0, width: Double(d))
+                }
+                let prevWalls    = structure.walls.map   { geoW($0.transform, $0.dimensions.x) }
+                let prevDoors    = structure.doors.map   { geoO($0.transform, $0.dimensions.x) }
+                let prevWindows  = structure.windows.map { geoO($0.transform, $0.dimensions.x) }
+                let prevRoomData   = structure.rooms.map { self.wallsAreaAndCentroid($0.walls) }
+                let prevCentroids  = prevRoomData.map { ScanCentroid(cx: $0.cx, cz: $0.cz) }
+                let prevAreas      = prevRoomData.map(\.area)
+
                 await MainActor.run {
-                    ScanStore.shared.add(record)
-                    onDone(true)
+                    self.loadingOverlay.isHidden = true
+                    self.showNamingScreen(
+                        roomCount: structure.rooms.count,
+                        previewWalls: prevWalls,
+                        previewDoors: prevDoors,
+                        previewWindows: prevWindows,
+                        previewCentroids: prevCentroids,
+                        previewAreas: prevAreas
+                    ) { [weak self] names in
+                        guard let self else { return }
+                        self.loadingLabel.text = "Daten werden gespeichert…"
+                        self.loadingOverlay.isHidden = false
+                        Task {
+                            do {
+                                let record = try self.saveResults(structure: structure, roomNames: names)
+                                await MainActor.run { ScanStore.shared.add(record); self.onDone(true) }
+                            } catch {
+                                await MainActor.run {
+                                    self.loadingOverlay.isHidden = true
+                                    self.showError(error.localizedDescription)
+                                }
+                            }
+                        }
+                    }
                 }
             } catch {
-                // StructureBuilder fehlgeschlagen — Einzelräume als Fallback speichern
-                do {
-                    let record = try saveFallback(rooms: capturedRooms, roomNames: collectedNames)
-                    await MainActor.run {
-                        ScanStore.shared.add(record)
-                        onDone(true)
-                    }
-                } catch let fallbackError {
-                    await MainActor.run {
-                        self.loadingOverlay.isHidden = true
-                        self.showError(fallbackError.localizedDescription)
+                // StructureBuilder fehlgeschlagen — Fallback mit Einzelräumen
+                print("[DIAG] StructureBuilder FEHLER → Fallback wird genutzt. Fehler: \(error)")
+                // Vorschau aus dem ersten Raum (Fallback = lokale Koordinaten, nur 1 Raum zeigbar)
+                let roomCount = self.capturedRooms.count
+                print("[DIAG] Fallback: roomCount = \(roomCount)")
+                let fbFirst = self.capturedRooms.first
+                func fbGeoW(_ t: simd_float4x4, _ d: Float) -> WallGeometry2D {
+                    let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+                    let l = sqrt(dx*dx + dz*dz)
+                    return WallGeometry2D(cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                                         dirX: l > 1e-6 ? dx/l : 1, dirZ: l > 1e-6 ? dz/l : 0, width: Double(d))
+                }
+                func fbGeoO(_ t: simd_float4x4, _ d: Float) -> OpeningGeometry2D {
+                    let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+                    let l = sqrt(dx*dx + dz*dz)
+                    return OpeningGeometry2D(cx: Double(t.columns.3.x), cz: Double(t.columns.3.z),
+                                             dirX: l > 1e-6 ? dx/l : 1, dirZ: l > 1e-6 ? dz/l : 0, width: Double(d))
+                }
+                let fbWalls   = fbFirst.map { r in r.walls.map   { fbGeoW($0.transform, $0.dimensions.x) } } ?? []
+                let fbDoors   = fbFirst.map { r in r.doors.map   { fbGeoO($0.transform, $0.dimensions.x) } } ?? []
+                let fbWindows = fbFirst.map { r in r.windows.map { fbGeoO($0.transform, $0.dimensions.x) } } ?? []
+                let fbRoomData  = self.capturedRooms.map { self.wallsAreaAndCentroid($0.walls) }
+                let fbCentroid  = fbRoomData.map { ScanCentroid(cx: $0.cx, cz: $0.cz) }
+                let fbAreas     = fbRoomData.map(\.area)
+                await MainActor.run {
+                    self.loadingOverlay.isHidden = true
+                    self.showNamingScreen(
+                        roomCount: roomCount,
+                        previewWalls: fbWalls,
+                        previewDoors: fbDoors,
+                        previewWindows: fbWindows,
+                        previewCentroids: fbCentroid,
+                        previewAreas: fbAreas
+                    ) { [weak self] names in
+                        guard let self else { return }
+                        self.loadingLabel.text = "Daten werden gespeichert…"
+                        self.loadingOverlay.isHidden = false
+                        Task {
+                            do {
+                                let record = try self.saveFallback(rooms: self.capturedRooms, roomNames: names)
+                                await MainActor.run { ScanStore.shared.add(record); self.onDone(true) }
+                            } catch let fallbackError {
+                                await MainActor.run {
+                                    self.loadingOverlay.isHidden = true
+                                    self.showError(fallbackError.localizedDescription)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -284,29 +461,25 @@ private extension RoomScanViewController {
             )
         }
 
-        // 2. Bodenfläche pro Raum (parallel zu structure.rooms / capturedRooms)
-        let structureRoomAreas: [Double] = structure.rooms.map {
-            $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+        // 2. Bodenfläche + Schwerpunkt pro Raum via Wand-Polygon (Shoelace).
+        // structure.rooms[i].floors ist in RoomPlan häufig leer (Floor-Detektor unzuverlässig
+        // bei Teppich / glatten Böden). Daher Fläche aus den Wand-Eckpunkten berechnen.
+        let roomData = structure.rooms.map { wallsAreaAndCentroid($0.walls) }
+        var roomFloorAreas: [Double] = roomData.map(\.area)
+        // Letzter Fallback auf structure.floors wenn kein Polygon eine sinnvolle Fläche ergibt
+        if roomFloorAreas.allSatisfy({ $0 < 0.01 }) {
+            let floorsAreas = structure.rooms.map {
+                $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
+            }
+            if floorsAreas.contains(where: { $0 > 0.01 }) { roomFloorAreas = floorsAreas }
         }
-        // Wenn StructureBuilder keine Bodenflächen liefert → aus Einzelraum-Scans
-        let roomFloorAreas: [Double] = structureRoomAreas.allSatisfy({ $0 < 0.01 })
-            ? capturedRooms.map { $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) } }
-            : structureRoomAreas
         var totalArea = roomFloorAreas.reduce(0, +)
         if totalArea < 0.01 {
             totalArea = structure.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
         }
 
-        // 2b. Raum-Mittelpunkte aus Bodenflächen-Transforms
-        let roomCentroids: [ScanCentroid] = structure.rooms.map { room in
-            let centers = room.floors.map {
-                (Double($0.transform.columns.3.x), Double($0.transform.columns.3.z))
-            }
-            guard !centers.isEmpty else { return ScanCentroid(cx: 0, cz: 0) }
-            let cx = centers.map(\.0).reduce(0, +) / Double(centers.count)
-            let cz = centers.map(\.1).reduce(0, +) / Double(centers.count)
-            return ScanCentroid(cx: cx, cz: cz)
-        }
+        // 2b. Raum-Schwerpunkte aus Wand-Polygon
+        let roomCentroids: [ScanCentroid] = roomData.map { ScanCentroid(cx: $0.cx, cz: $0.cz) }
 
         // 3. 2D-Geometrie für Grundriss (XZ-Projektion, Weltkoordinaten der Struktur)
         func makeWallGeo(_ t: simd_float4x4, _ dimX: Float) -> WallGeometry2D {
@@ -366,7 +539,7 @@ private extension RoomScanViewController {
             objectGeometry: objectGeos,
             roomCentroids: roomCentroids,
             floorAreaM2: totalArea,
-            address: nil,
+            address: address,
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             schadensnummer: schadensnummer,
@@ -393,14 +566,16 @@ private extension RoomScanViewController {
             wallGeometry: wallGeos,
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
-            address: nil,
+            address: address,
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
+            photoComments: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
             manualWallMeasurements: nil,
-            roomCentroids: roomCentroids
+            roomCentroids: roomCentroids,
+            floorPlanAnnotations: nil
         )
     }
 
@@ -445,9 +620,9 @@ private extension RoomScanViewController {
             }
         }
 
-        let roomFloorAreas: [Double] = rooms.map {
-            $0.floors.reduce(0.0) { $0 + Double($1.dimensions.x * $1.dimensions.z) }
-        }
+        // Fläche via Wand-Polygon (floors oft leer, s. wallsAreaAndCentroid)
+        let fallbackRoomData = rooms.map { wallsAreaAndCentroid($0.walls) }
+        let roomFloorAreas: [Double] = fallbackRoomData.map(\.area)
         let totalArea = roomFloorAreas.reduce(0, +)
 
         // 2D-Geometrie nur vom ersten Raum (kein gemeinsames Koordinatensystem ohne StructureBuilder)
@@ -489,16 +664,8 @@ private extension RoomScanViewController {
                 )
             }
         }
-        // Raum-Mittelpunkte aus Bodenflächen der Einzelräume
-        let roomCentroids: [ScanCentroid] = rooms.map { room in
-            let centers = room.floors.map {
-                (Double($0.transform.columns.3.x), Double($0.transform.columns.3.z))
-            }
-            guard !centers.isEmpty else { return ScanCentroid(cx: 0, cz: 0) }
-            let cx = centers.map(\.0).reduce(0, +) / Double(centers.count)
-            let cz = centers.map(\.1).reduce(0, +) / Double(centers.count)
-            return ScanCentroid(cx: cx, cz: cz)
-        }
+        // Raum-Schwerpunkte aus Wand-Polygon (floors oft leer)
+        let roomCentroids: [ScanCentroid] = fallbackRoomData.map { ScanCentroid(cx: $0.cx, cz: $0.cz) }
 
         // USDZ vom ersten Raum
         let usdzURL = folder.appendingPathComponent("scan.usdz")
@@ -519,7 +686,7 @@ private extension RoomScanViewController {
             objectGeometry: objectGeos,
             roomCentroids: roomCentroids,
             floorAreaM2: totalArea,
-            address: nil,
+            address: address,
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             schadensnummer: schadensnummer,
@@ -546,15 +713,48 @@ private extension RoomScanViewController {
             wallGeometry: wallGeos,
             doorGeometry: doorGeos,
             windowGeometry: windowGeos,
-            address: nil,
+            address: address,
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
+            photoComments: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
             manualWallMeasurements: nil,
-            roomCentroids: roomCentroids
+            roomCentroids: roomCentroids,
+            floorPlanAnnotations: nil
         )
+    }
+
+    /// Berechnet Raumfläche (Shoelace über Wand-Eckpunkte) und Schwerpunkt.
+    /// Fallback wenn structure.rooms[i].floors leer ist – passiert häufig in RoomPlan,
+    /// weil der Floor-Detektor horizontale Flächen bei Teppich/Holz nicht zuverlässig erkennt.
+    func wallsAreaAndCentroid(_ walls: [CapturedRoom.Surface]) -> (area: Double, cx: Double, cz: Double) {
+        var pts: [(Double, Double)] = []
+        for w in walls {
+            let t = w.transform
+            let wx = Double(t.columns.3.x), wz = Double(t.columns.3.z)
+            let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
+            let len = sqrt(dx*dx + dz*dz)
+            let ux = len > 1e-6 ? dx/len : 1.0, uz = len > 1e-6 ? dz/len : 0.0
+            let halfW = Double(w.dimensions.x) / 2.0
+            pts.append((wx - ux*halfW, wz - uz*halfW))
+            pts.append((wx + ux*halfW, wz + uz*halfW))
+        }
+        guard pts.count >= 3 else { return (0, 0, 0) }
+        let centX = pts.map(\.0).reduce(0, +) / Double(pts.count)
+        let centZ = pts.map(\.1).reduce(0, +) / Double(pts.count)
+        // Punkte nach Winkel sortieren → konvexes Polygon
+        let sorted = pts.sorted {
+            atan2($0.1 - centZ, $0.0 - centX) < atan2($1.1 - centZ, $1.0 - centX)
+        }
+        var area = 0.0
+        let n = sorted.count
+        for i in 0..<n {
+            let j = (i + 1) % n
+            area += sorted[i].0 * sorted[j].1 - sorted[j].0 * sorted[i].1
+        }
+        return (abs(area) / 2.0, centX, centZ)
     }
 
     func showError(_ message: String) {
@@ -579,44 +779,135 @@ private extension CapturedRoom.Confidence {
     }
 }
 
-// MARK: - Post-Scan Raum-Benennung
+// MARK: - Post-Scan Raum-Benennung (Grundriss + Liste)
 
 struct RoomNamingView: View {
     let roomCount: Int
+    let previewWalls: [WallGeometry2D]
+    let previewDoors: [OpeningGeometry2D]
+    let previewWindows: [OpeningGeometry2D]
+    let previewCentroids: [ScanCentroid]
+    let roomAreas: [Double]
     @State private var names: [String]
+    @State private var previewImage: UIImage?
     let onConfirm: ([String]) -> Void
 
-    init(roomCount: Int, onConfirm: @escaping ([String]) -> Void) {
+    private let kraftBlue = Color(red: 0.04, green: 0.52, blue: 1)
+
+    private var totalArea: Double { roomAreas.reduce(0, +) }
+
+    init(roomCount: Int,
+         previewWalls: [WallGeometry2D] = [],
+         previewDoors: [OpeningGeometry2D] = [],
+         previewWindows: [OpeningGeometry2D] = [],
+         previewCentroids: [ScanCentroid] = [],
+         roomAreas: [Double] = [],
+         onConfirm: @escaping ([String]) -> Void) {
         self.roomCount = roomCount
+        self.previewWalls = previewWalls
+        self.previewDoors = previewDoors
+        self.previewWindows = previewWindows
+        self.previewCentroids = previewCentroids
+        self.roomAreas = roomAreas
         self._names = State(initialValue: (1...max(1, roomCount)).map { "Raum \($0)" })
         self.onConfirm = onConfirm
     }
 
     var body: some View {
         NavigationStack {
-            Form {
+            List {
+                // ── Grundriss-Vorschau ──
+                if !previewWalls.isEmpty {
+                    Section {
+                        Group {
+                            if let img = previewImage {
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                            } else {
+                                ZStack {
+                                    Color(UIColor.secondarySystemBackground)
+                                    ProgressView("Grundriss wird geladen…").font(.caption)
+                                }
+                                .aspectRatio(1, contentMode: .fit)
+                            }
+                        }
+                        .frame(maxHeight: 280)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                    } footer: {
+                        Text("Nummerierte Kreise entsprechen den Zeilen unten.")
+                            .font(.caption2)
+                    }
+                }
+
+                // ── Räume ──
                 Section {
                     ForEach(0..<names.count, id: \.self) { i in
-                        TextField("Raum \(i + 1)", text: $names[i])
+                        HStack(spacing: 12) {
+                            // Nummernkreis
+                            ZStack {
+                                Circle().fill(kraftBlue).frame(width: 30, height: 30)
+                                Text("\(i + 1)")
+                                    .font(.system(.callout, design: .rounded).bold())
+                                    .foregroundColor(.white)
+                            }
+                            // Bezeichnung
+                            TextField("z.B. Wohnzimmer, Küche…", text: $names[i])
+                                .autocorrectionDisabled()
+                            Spacer()
+                            // m²
+                            if i < roomAreas.count && roomAreas[i] > 0.01 {
+                                Text(String(format: "%.1f m²", roomAreas[i]))
+                                    .font(.system(.subheadline, design: .rounded).weight(.medium))
+                                    .foregroundColor(kraftBlue)
+                                    .monospacedDigit()
+                            }
+                        }
                     }
                 } header: {
-                    Text("Erkannte Räume – Namen optional")
+                    Text("Erkannte Räume")
                 } footer: {
-                    Text("Felder leer lassen = Standardname wird verwendet (Raum 1, Raum 2 …)")
+                    Text("Felder leer lassen = Standardname (Raum 1, 2 …)")
                         .font(.caption2)
                 }
+
+                // ── Gesamtfläche ──
+                if totalArea > 0.01 {
+                    Section {
+                        HStack {
+                            Label("Gesamtfläche", systemImage: "square.dashed")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(String(format: "%.1f m²", totalArea))
+                                .font(.system(.body, design: .rounded).weight(.semibold))
+                                .foregroundColor(kraftBlue)
+                                .monospacedDigit()
+                        }
+                    }
+                }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Räume benennen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Weiter") {
+                    Button("Speichern") {
                         let resolved = names.enumerated().map { i, n in
                             n.trimmingCharacters(in: .whitespaces).isEmpty ? "Raum \(i + 1)" : n
                         }
                         onConfirm(resolved)
                     }
+                    .fontWeight(.semibold)
                 }
+            }
+            .task {
+                guard !previewWalls.isEmpty else { return }
+                let w = previewWalls, d = previewDoors, wi = previewWindows, c = previewCentroids
+                previewImage = await Task.detached(priority: .userInitiated) {
+                    FloorPlanRenderer.renderNumberedPreview(
+                        walls: w, doors: d, windows: wi, roomCentroids: c)
+                }.value
             }
         }
     }
@@ -635,7 +926,6 @@ private func objectLabel(for category: CapturedRoom.Object.Category) -> String {
     case .table:        return "Tisch"
     case .chair:        return "Stuhl"
     case .television:   return "TV"
-    case .screen:       return "Display"
     case .refrigerator: return "Kühlschr."
     case .oven:         return "Ofen"
     case .stove:        return "Herd"
@@ -677,8 +967,10 @@ struct FloorPlanRenderer {
         schadensnummer: String,
         date: Date,
         roomPhotos: [String: [String]]?,
+        photoComments: [String: String]? = nil,
         folderURL: URL,
         moistureMeasurements: [MoistureMeasurement]?,
+        annotations: [FloorPlanAnnotation]? = nil,
         at url: URL
     ) throws {
         // Gesamtseitenzahl exakt berechnen (Simulation der Tabellenseiten)
@@ -686,9 +978,10 @@ struct FloorPlanRenderer {
             wallMeasurements: wallMeasurements,
             doorMeasurements: doorMeasurements,
             windowMeasurements: windowMeasurements,
-            address: address, roomNames: roomNames, floorAreaM2: floorAreaM2
+            address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas, floorAreaM2: floorAreaM2
         )
-        var totalPages = 1 + tablePageCount  // Grundriss + geschätzte Maßtabellen-Seiten
+        let hasObjects = !objectGeometry.isEmpty
+        var totalPages = 1 + (hasObjects ? 1 : 0) + tablePageCount  // Grundriss(se) + Maßtabellen
         if let photos = roomPhotos {
             let roomOrder = roomNames ?? Array(photos.keys.sorted())
             for roomName in roomOrder {
@@ -705,15 +998,27 @@ struct FloorPlanRenderer {
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
         let pdfData = UIGraphicsPDFRenderer(bounds: pageRect).pdfData { ctx in
 
-            // Seite 1: Grundriss
+            // Seite 1: Grundriss mit Objekten
             drawPDFPage(context: ctx, walls: wallGeometry, doors: doorGeometry, windows: windowGeometry,
                         objects: objectGeometry, roomCentroids: roomCentroids,
                         schadensnummer: schadensnummer, date: date, floorAreaM2: floorAreaM2,
                         address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
+                        annotations: annotations, showObjects: true,
                         pageNum: 1, totalPages: totalPages)
 
-            // Seite 2+: Maßtabelle (automatischer Seitenumbruch bei Überlauf)
+            // Seite 2 (optional): Grundriss ohne Objekte
             var currentPage = 2
+            if hasObjects {
+                drawPDFPage(context: ctx, walls: wallGeometry, doors: doorGeometry, windows: windowGeometry,
+                            objects: objectGeometry, roomCentroids: roomCentroids,
+                            schadensnummer: schadensnummer, date: date, floorAreaM2: floorAreaM2,
+                            address: address, roomNames: roomNames, roomFloorAreas: roomFloorAreas,
+                            annotations: annotations, showObjects: false,
+                            pageNum: 2, totalPages: totalPages)
+                currentPage = 3
+            }
+
+            // Nächste Seite: Maßtabelle (automatischer Seitenumbruch bei Überlauf)
 
             ctx.beginPage()
             var tblG = ctx.cgContext
@@ -774,6 +1079,32 @@ struct FloorPlanRenderer {
             }
             tnl(10)
 
+            // RÄUME-Tabelle (nur wenn Raumnamen vorhanden)
+            if let names = roomNames, !names.isEmpty {
+                ensure(80)
+                ttext("RÄUME  (\(names.count))", attrs: sectionAttrs); tnl(20)
+                tableHeader([("Nr.", 40), ("Bezeichnung", 90), ("Fläche (m²)", 350)])
+                let areas = roomFloorAreas ?? []
+                for (i, name) in names.enumerated() {
+                    let areaStr = i < areas.count && areas[i] > 0
+                        ? String(format: "%.2f", areas[i])
+                        : "–"
+                    tableRow([("\(i+1)", 40), (name.isEmpty ? "–" : name, 90), (areaStr, 350)])
+                }
+                // Gesamtfläche-Zeile
+                let total = areas.reduce(0, +)
+                if total > 0 {
+                    ensure(22)
+                    tblG.setStrokeColor(UIColor.lightGray.cgColor); tblG.setLineWidth(0.5)
+                    tblG.move(to: CGPoint(x: 40, y: ty)); tblG.addLine(to: CGPoint(x: 555, y: ty)); tblG.strokePath()
+                    tnl(4)
+                    ttext("Gesamt", x: 90, attrs: boldAttrs)
+                    ttext(String(format: "%.2f m²", total), x: 350, attrs: boldAttrs)
+                    tnl(22)
+                }
+                tnl(10)
+            }
+
             ensure(80)  // Section-Titel + Tabellenkopf + min. 1 Zeile
             ttext("WÄNDE  (\(wallMeasurements.count))", attrs: sectionAttrs); tnl(20)
             if wallMeasurements.isEmpty {
@@ -820,7 +1151,7 @@ struct FloorPlanRenderer {
             tblG.setStrokeColor(UIColor.lightGray.cgColor)
             tblG.move(to: CGPoint(x: 40, y: ty)); tblG.addLine(to: CGPoint(x: 555, y: ty)); tblG.strokePath()
             tnl(8)
-            ttext("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit InnoviScan", attrs: bodyAttrs)
+            ttext("3D-Modell: Scan_\(schadensnummer).usdz  |  Erstellt mit ScanIQ", attrs: bodyAttrs)
 
             drawFooter(g: tblG, pageW: 595, y: 842 - 28, pageNum: currentPage, totalPages: totalPages)
 
@@ -852,23 +1183,35 @@ struct FloorPlanRenderer {
                     (roomName as NSString).draw(at: CGPoint(x: 40, y: photoY), withAttributes: titleAttrs)
                     photoY += 22
 
-                    let photoW: CGFloat = 160, photoH: CGFloat = 120, gap: CGFloat = 10
+                    let photoW: CGFloat = 160, photoH: CGFloat = 120
+                    let commentH: CGFloat = 14   // Zeile für Kommentar unter jedem Foto
+                    let gap: CGFloat = 12
+                    let cellH = photoH + commentH + 2  // Gesamthöhe pro Zelle
                     let cols = 3
+                    let commentAttrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.italicSystemFont(ofSize: 8.5),
+                        .foregroundColor: UIColor.darkGray
+                    ]
 
-                    // Jedes Bild einzeln laden, zeichnen, sofort freigeben
+                    // Jedes Bild einzeln laden, zeichnen, Kommentar darunter, sofort freigeben
                     for (i, name) in fileNames.enumerated() {
                         let col = CGFloat(i % cols)
                         let row = CGFloat(i / cols)
                         let px = 40 + col * (photoW + gap)
-                        let py = photoY + row * (photoH + gap)
-                        guard py + photoH <= 800 else { break }
+                        let py = photoY + row * (cellH + gap)
+                        guard py + cellH <= 800 else { break }
 
                         autoreleasepool {
                             let imgURL = folderURL.appendingPathComponent(name)
                             guard let data = try? Data(contentsOf: imgURL),
                                   let img = UIImage(data: data) else { return }
                             img.draw(in: CGRect(x: px, y: py, width: photoW, height: photoH))
-                            // img und data werden am Ende dieses autoreleasepool-Blocks freigegeben
+                        }
+
+                        if let comment = photoComments?[name], !comment.isEmpty {
+                            (comment as NSString).draw(
+                                in: CGRect(x: px, y: py + photoH + 2, width: photoW, height: commentH),
+                                withAttributes: commentAttrs)
                         }
                     }
 
@@ -949,6 +1292,8 @@ struct FloorPlanRenderer {
         address: ScanAddress?,
         roomNames: [String]?,
         roomFloorAreas: [Double]? = nil,
+        annotations: [FloorPlanAnnotation]? = nil,
+        showObjects: Bool = true,
         pageNum: Int = 1,
         totalPages: Int = 1
     ) {
@@ -966,11 +1311,25 @@ struct FloorPlanRenderer {
             floorAreaM2: floorAreaM2
         )
 
+        // Subtitle when objects are hidden
+        var extraHeaderH: CGFloat = 0
+        if !showObjects {
+            let subtitleAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.italicSystemFont(ofSize: 9),
+                .foregroundColor: UIColor.darkGray
+            ]
+            ("Grundriss ohne Objekte" as NSString).draw(
+                at: CGPoint(x: margin, y: headerH + 2),
+                withAttributes: subtitleAttrs
+            )
+            extraHeaderH = 14
+        }
+
         let drawRect = CGRect(
             x: margin,
-            y: headerH + 4,
+            y: headerH + extraHeaderH + 4,
             width: pageW - 2 * margin,
-            height: pageH - headerH - 4 - footerH - 10
+            height: pageH - headerH - extraHeaderH - 4 - footerH - 10
         )
         drawFloorPlan(g: g, in: drawRect,
                       walls: walls, doors: doors, windows: windows,
@@ -978,8 +1337,10 @@ struct FloorPlanRenderer {
                       roomCentroids: roomCentroids,
                       floorAreaM2: floorAreaM2, roomNames: roomNames,
                       roomFloorAreas: roomFloorAreas,
+                      annotations: annotations,
                       etage: address?.etage,
-                      pageNum: pageNum, totalPages: totalPages)
+                      pageNum: pageNum, totalPages: totalPages,
+                      showObjects: showObjects)
 
         drawFooter(g: g, pageW: pageW, y: pageH - footerH + 4,
                    pageNum: pageNum, totalPages: totalPages)
@@ -996,6 +1357,9 @@ struct FloorPlanRenderer {
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
+        annotations: [FloorPlanAnnotation]? = nil,
+        showObjects: Bool = true,
+        manuallyChangedIndices: Set<Int> = [],
         size: CGSize = CGSize(width: 480, height: 480)
     ) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -1012,9 +1376,113 @@ struct FloorPlanRenderer {
                 objects: objects,
                 roomCentroids: roomCentroids,
                 floorAreaM2: floorAreaM2, roomNames: roomNames,
-                roomFloorAreas: roomFloorAreas
+                roomFloorAreas: roomFloorAreas,
+                annotations: annotations,
+                imageSize: size,
+                showObjects: showObjects,
+                manuallyChangedIndices: manuallyChangedIndices
             )
         }
+    }
+
+    // MARK: - Benennungs-Vorschau mit nummerierten Kreisen
+
+    /// Grundriss mit KRAFT-blauen Nummernkreisen — für den Benennungs-Screen
+    static func renderNumberedPreview(
+        walls: [WallGeometry2D],
+        doors: [OpeningGeometry2D],
+        windows: [OpeningGeometry2D],
+        roomCentroids: [ScanCentroid],
+        size: CGSize = CGSize(width: 480, height: 480)
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            UIColor.white.setFill()
+            UIRectFill(CGRect(origin: .zero, size: size))
+            let pad: CGFloat = 24
+            drawFloorPlan(
+                g: ctx.cgContext,
+                in: CGRect(x: pad, y: pad, width: size.width - 2*pad, height: size.height - 2*pad),
+                walls: walls, doors: doors, windows: windows,
+                roomCentroids: roomCentroids,
+                floorAreaM2: 0,
+                showRoomNumbers: true
+            )
+        }
+    }
+
+    // MARK: - Maßlabel-Positionen (für Tap-Erkennung in ScanDetailView)
+
+    /// Gibt die normalisierten Mittelpunkte aller Maßlinien-Labels zurück (0..1 relativ zur Bildgröße).
+    static func wallLabelPositions(
+        walls: [WallGeometry2D],
+        doors: [OpeningGeometry2D],
+        windows: [OpeningGeometry2D],
+        size: CGSize = CGSize(width: 480, height: 480)
+    ) -> [(wallIndex: Int, relX: Double, relY: Double)] {
+        guard !walls.isEmpty else { return [] }
+        let pad: CGFloat = 20
+        let rect = CGRect(x: pad, y: pad, width: size.width - 2*pad, height: size.height - 2*pad)
+
+        let longestWall = walls.max(by: { $0.width < $1.width })
+        var rotAngle: Double = 0
+        if let lw = longestWall {
+            rotAngle = -atan2(lw.dirZ, lw.dirX)
+            if rotAngle >  Double.pi / 2 { rotAngle -= Double.pi }
+            if rotAngle <= -Double.pi / 2 { rotAngle += Double.pi }
+        }
+        let cosR = cos(rotAngle), sinR = sin(rotAngle)
+        func rotW(_ wx: Double, _ wz: Double) -> (Double, Double) {
+            (wx * cosR - wz * sinR, wx * sinR + wz * cosR)
+        }
+
+        var allX: [Double] = [], allZ: [Double] = []
+        for w in walls {
+            let hw = w.width / 2
+            let (x1, z1) = rotW(w.cx + hw * w.dirX, w.cz + hw * w.dirZ)
+            let (x2, z2) = rotW(w.cx - hw * w.dirX, w.cz - hw * w.dirZ)
+            allX += [x1, x2]; allZ += [z1, z2]
+        }
+        for o in doors + windows {
+            let hw = o.width / 2
+            let (x1, z1) = rotW(o.cx + hw * o.dirX, o.cz + hw * o.dirZ)
+            let (x2, z2) = rotW(o.cx - hw * o.dirX, o.cz - hw * o.dirZ)
+            allX += [x1, x2]; allZ += [z1, z2]
+        }
+        guard let minX = allX.min(), let maxX = allX.max(),
+              let minZ = allZ.min(), let maxZ = allZ.max() else { return [] }
+
+        let worldW = max(maxX - minX, 0.1), worldH = max(maxZ - minZ, 0.1)
+        let labelPad: CGFloat = 48
+        let scale = min((rect.width - 2*labelPad) / CGFloat(worldW),
+                        (rect.height - 2*labelPad) / CGFloat(worldH))
+        let scaledW = CGFloat(worldW) * scale, scaledH = CGFloat(worldH) * scale
+        let ox = rect.minX + labelPad + (rect.width  - 2*labelPad - scaledW) / 2
+        let oy = rect.minY + labelPad + (rect.height - 2*labelPad - scaledH) / 2
+
+        func cv(_ wx: Double, _ wz: Double) -> CGPoint {
+            let (rx, rz) = rotW(wx, wz)
+            return CGPoint(x: ox + CGFloat(rx - minX) * scale,
+                           y: oy + CGFloat(rz - minZ) * scale)
+        }
+
+        var result: [(wallIndex: Int, relX: Double, relY: Double)] = []
+        for (i, wall) in walls.enumerated() {
+            let hw = wall.width / 2
+            let p1 = cv(wall.cx + hw * wall.dirX, wall.cz + hw * wall.dirZ)
+            let p2 = cv(wall.cx - hw * wall.dirX, wall.cz - hw * wall.dirZ)
+            let ang = atan2(Double(p2.y - p1.y), Double(p2.x - p1.x))
+            let perpX = CGFloat(-sin(ang)) * 15
+            let perpY = CGFloat( cos(ang)) * 15
+            let p1off = CGPoint(x: p1.x + perpX, y: p1.y + perpY)
+            let p2off = CGPoint(x: p2.x + perpX, y: p2.y + perpY)
+            let lx = (p1off.x + p2off.x) / 2
+            let ly = (p1off.y + p2off.y) / 2 - 9
+            result.append((wallIndex: i,
+                           relX: Double(lx / size.width),
+                           relY: Double(ly / size.height)))
+        }
+        return result
     }
 
     // MARK: - Kernzeichnung
@@ -1030,9 +1498,14 @@ struct FloorPlanRenderer {
         floorAreaM2: Double,
         roomNames: [String]? = nil,
         roomFloorAreas: [Double]? = nil,
+        annotations: [FloorPlanAnnotation]? = nil,
+        imageSize: CGSize = .zero,
         etage: String? = nil,
         pageNum: Int = 0,
-        totalPages: Int = 0
+        totalPages: Int = 0,
+        showRoomNumbers: Bool = false,
+        showObjects: Bool = true,
+        manuallyChangedIndices: Set<Int> = []
     ) {
         guard !walls.isEmpty else {
             let attrs: [NSAttributedString.Key: Any] = [
@@ -1089,14 +1562,15 @@ struct FloorPlanRenderer {
         let ox = rect.minX + labelPad + (rect.width  - 2*labelPad - scaledW) / 2
         let oy = rect.minY + labelPad + (rect.height - 2*labelPad - scaledH) / 2
 
-        // Welt (XZ) → Canvas: erst rotieren, dann X-spiegeln für korrekte 2D-Händigkeit
+        // Welt (XZ) → Canvas: rotieren, ARKit-X direkt als Canvas-X (kein Spiegeln)
         func cv(_ wx: Double, _ wz: Double) -> CGPoint {
             let (rx, rz) = rotW(wx, wz)
-            return CGPoint(x: ox + CGFloat(maxX - rx) * scale,
+            return CGPoint(x: ox + CGFloat(rx - minX) * scale,
                            y: oy + CGFloat(rz - minZ) * scale)
         }
 
         drawGrid(g: g, rect: CGRect(x: ox, y: oy, width: scaledW, height: scaledH))
+
 
         // Etage-Bezeichnung oben links im Grundriss-Bereich
         if let et = etage, !et.isEmpty {
@@ -1168,7 +1642,7 @@ struct FloorPlanRenderer {
         g.restoreGState()
 
         // 4. Objekte (Möbel, Sanitär) — gestrichelte orange Rechtecke mit Beschriftung
-        if !objects.isEmpty {
+        if showObjects && !objects.isEmpty {
             let objLabelAttrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 6.5),
                 .foregroundColor: UIColor(red: 0.65, green: 0.35, blue: 0.0, alpha: 1)
@@ -1181,9 +1655,9 @@ struct FloorPlanRenderer {
                 let center = cv(obj.cx, obj.cz)
                 let halfW = CGFloat(obj.width / 2) * scale
                 let halfD = CGFloat(obj.depth / 2) * scale
-                // Richtungsvektor rotieren, dann in Canvas-Space (X gespiegelt)
+                // Richtungsvektor rotieren, direkt in Canvas-Space (kein Spiegeln mehr)
                 let (rdx, rdz) = rotW(obj.dirX, obj.dirZ)
-                let axW = CGPoint(x: -CGFloat(rdx), y: CGFloat(rdz))
+                let axW = CGPoint(x: CGFloat(rdx), y: CGFloat(rdz))
                 let axD = CGPoint(x: -axW.y, y: axW.x)
                 let corner1 = CGPoint(x: center.x + axW.x*halfW + axD.x*halfD,
                                       y: center.y + axW.y*halfW + axD.y*halfD)
@@ -1249,9 +1723,14 @@ struct FloorPlanRenderer {
             let p1off = CGPoint(x: p1.x + perpX, y: p1.y + perpY)
             let p2off = CGPoint(x: p2.x + perpX, y: p2.y + perpY)
 
+            let isManual = manuallyChangedIndices.contains(i)
+            let dimLineColor = isManual
+                ? UIColor(red: 0.85, green: 0.4, blue: 0.0, alpha: 1)
+                : UIColor(white: 0.45, alpha: 1)
+
             g.saveGState()
-            g.setStrokeColor(UIColor(white: 0.45, alpha: 1).cgColor)
-            g.setLineWidth(0.7)
+            g.setStrokeColor(dimLineColor.cgColor)
+            g.setLineWidth(isManual ? 1.1 : 0.7)
             g.move(to: p1off); g.addLine(to: p2off)
             g.move(to: p1); g.addLine(to: p1off)
             g.move(to: p2); g.addLine(to: p2off)
@@ -1261,79 +1740,150 @@ struct FloorPlanRenderer {
             drawArrowhead(at: p1off, direction: CGPoint(x: p1off.x - p2off.x, y: p1off.y - p2off.y))
             drawArrowhead(at: p2off, direction: CGPoint(x: p2off.x - p1off.x, y: p2off.y - p1off.y))
 
-            // Maßzahl über der Maßlinie
+            // Maßzahl parallel zur Maßlinie (rotiert wenn Wand nicht waagerecht)
             let label = String(format: "%.2f m", wall.width)
                 .replacingOccurrences(of: ".", with: ",")
-            let sz = (label as NSString).size(withAttributes: dimAttrs)
+            let activeDimAttrs: [NSAttributedString.Key: Any] = isManual
+                ? [.font: UIFont.boldSystemFont(ofSize: 8.5), .foregroundColor: UIColor(red: 0.85, green: 0.4, blue: 0.0, alpha: 1)]
+                : dimAttrs
+            let sz = (label as NSString).size(withAttributes: activeDimAttrs)
+            // Winkel der Maßlinie im Canvas (p1off → p2off)
+            let lineAngle = atan2(Double(p2off.y - p1off.y), Double(p2off.x - p1off.x))
+            // Mittelpunkt der Maßlinie
+            let labelCx = (p1off.x + p2off.x) / 2
+            let labelCy = (p1off.y + p2off.y) / 2 - 9
+            g.saveGState()
+            g.translateBy(x: labelCx, y: labelCy)
+            // Text in Leserichtung halten (kein Kopf-über-Drehen)
+            var drawAngle = CGFloat(lineAngle)
+            if drawAngle >  .pi / 2 { drawAngle -= .pi }
+            if drawAngle < -.pi / 2 { drawAngle += .pi }
+            g.rotate(by: drawAngle)
             (label as NSString).draw(
-                at: CGPoint(x: mid.x + perpX - sz.width/2,
-                            y: mid.y + perpY - sz.height/2 - 9),
-                withAttributes: dimAttrs
-            )
+                at: CGPoint(x: -sz.width / 2, y: -sz.height / 2),
+                withAttributes: activeDimAttrs)
+            g.restoreGState()
 
-            // Wandnummer auf der Wandinnenseite
+            // Wandnummer auf der Wandinnenseite (ebenfalls parallel)
             let numLabel = "\(i + 1)"
             let nsz = (numLabel as NSString).size(withAttributes: numAttrs)
+            let numCx = (p1.x + p2.x) / 2 - perpX
+            let numCy = (p1.y + p2.y) / 2 - perpY
+            g.saveGState()
+            g.translateBy(x: numCx, y: numCy)
+            var numAngle = CGFloat(lineAngle)
+            if numAngle >  .pi / 2 { numAngle -= .pi }
+            if numAngle < -.pi / 2 { numAngle += .pi }
+            g.rotate(by: numAngle)
             (numLabel as NSString).draw(
-                at: CGPoint(x: mid.x - perpX - nsz.width/2,
-                            y: mid.y - perpY - nsz.height/2),
-                withAttributes: numAttrs
-            )
+                at: CGPoint(x: -nsz.width / 2, y: -nsz.height / 2),
+                withAttributes: numAttrs)
+            g.restoreGState()
         }
 
-        // Raumname + Fläche — bei Mehrraumgebäude an Raum-Mittelpunkt, sonst in der Grundriss-Mitte
-        let hasRoomNames = !(roomNames?.filter { !$0.isEmpty }.isEmpty ?? true)
-        if floorAreaM2 > 0.01 || hasRoomNames {
-            let ps = NSMutableParagraphStyle(); ps.alignment = .center
-            let roomLabelAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 10),
-                .foregroundColor: UIColor(white: 0.2, alpha: 1),
-                .paragraphStyle: ps
+        // ─── Raum-Labels: Nummernkreise (Benennungs-Screen) oder Name+Fläche (finaler Grundriss) ───
+        if showRoomNumbers && !roomCentroids.isEmpty {
+            // Nummerierte KRAFT-blaue Kreise für den Benennungs-Screen
+            let kraftBlue = UIColor(red: 0.04, green: 0.52, blue: 1, alpha: 1)
+            let circleNumAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 14),
+                .foregroundColor: UIColor.white
             ]
-            let names = roomNames?.filter { !$0.isEmpty } ?? []
-            let areas = roomFloorAreas ?? []
+            for (i, c) in roomCentroids.enumerated() {
+                let pt = cv(c.cx, c.cz)
+                let r: CGFloat = 16
+                g.saveGState()
+                g.setShadow(offset: CGSize(width: 0, height: 1), blur: 3,
+                            color: UIColor.black.withAlphaComponent(0.3).cgColor)
+                g.setFillColor(kraftBlue.cgColor)
+                g.fillEllipse(in: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2))
+                g.restoreGState()
+                let numStr = "\(i + 1)"
+                let nsz = (numStr as NSString).size(withAttributes: circleNumAttrs)
+                (numStr as NSString).draw(
+                    at: CGPoint(x: pt.x - nsz.width/2, y: pt.y - nsz.height/2),
+                    withAttributes: circleNumAttrs)
+            }
+        } else {
+            // Name + Fläche (finaler Grundriss + normale Vorschau)
+            let hasRoomNames = !(roomNames?.filter { !$0.isEmpty }.isEmpty ?? true)
+            if floorAreaM2 > 0.01 || hasRoomNames {
+                let ps = NSMutableParagraphStyle(); ps.alignment = .center
+                let roomLabelAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 10),
+                    .foregroundColor: UIColor(white: 0.2, alpha: 1),
+                    .paragraphStyle: ps
+                ]
+                let allNames: [String] = roomNames.map { arr in
+                    arr.enumerated().map { i, n in n.trimmingCharacters(in: .whitespaces).isEmpty ? "Raum \(i + 1)" : n }
+                } ?? []
+                let areas = roomFloorAreas ?? []
+                let usePerRoomLabels = !roomCentroids.isEmpty
+                    && roomCentroids.count == allNames.count && !allNames.isEmpty
 
-            let usePerRoomLabels = !roomCentroids.isEmpty && roomCentroids.count == names.count
-                && names.count > 0
+                if usePerRoomLabels {
+                    for (i, name) in allNames.enumerated() {
+                        let c = roomCentroids[i]
+                        let pt = cv(c.cx, c.cz)
+                        let areaStr = i < areas.count && areas[i] > 0.01
+                            ? String(format: "%.1f m²", areas[i]).replacingOccurrences(of: ".", with: ",") : ""
+                        let text = [name, areaStr].filter { !$0.isEmpty }.joined(separator: "\n")
+                        let lw: CGFloat = 120
+                        let lh: CGFloat = CGFloat(text.components(separatedBy: "\n").count) * 14 + 2
+                        (text as NSString).draw(
+                            in: CGRect(x: pt.x - lw/2, y: pt.y - lh/2, width: lw, height: lh),
+                            withAttributes: roomLabelAttrs)
+                    }
+                } else {
+                    var lines: [String] = []
+                    let dimStr = String(format: "(%.2f × %.2f m)", worldW, worldH)
+                        .replacingOccurrences(of: ".", with: ",")
+                    for (i, name) in allNames.enumerated() {
+                        let areaStr = i < areas.count
+                            ? String(format: "%.2f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
+                            : String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
+                        lines.append("\(name)  \(areaStr)  \(dimStr)")
+                    }
+                    if lines.isEmpty {
+                        lines.append(String(format: "%.2f m²", floorAreaM2)
+                            .replacingOccurrences(of: ".", with: ","))
+                    }
+                    let roomLabel = lines.joined(separator: "\n")
+                    let lw: CGFloat = 200, lh: CGFloat = CGFloat(lines.count) * 16 + 4
+                    (roomLabel as NSString).draw(
+                        in: CGRect(x: ox + scaledW/2 - lw/2, y: oy + scaledH/2 - lh/2,
+                                   width: lw, height: lh),
+                        withAttributes: roomLabelAttrs)
+                }
+            }
+        }
 
-            if usePerRoomLabels {
-                // Mehrraumgebäude: Raumname + m² am jeweiligen Raum-Mittelpunkt
-                for (i, name) in names.enumerated() {
-                    let c = roomCentroids[i]
-                    guard c.cx != 0 || c.cz != 0 else { continue }
-                    let pt = cv(c.cx, c.cz)
-                    let areaStr = i < areas.count && areas[i] > 0.01
-                        ? String(format: "%.1f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
-                        : ""
-                    let text = [name, areaStr].filter { !$0.isEmpty }.joined(separator: "\n")
-                    let lw: CGFloat = 120, lh: CGFloat = CGFloat(text.components(separatedBy: "\n").count) * 14 + 2
-                    (text as NSString).draw(
-                        in: CGRect(x: pt.x - lw/2, y: pt.y - lh/2, width: lw, height: lh),
-                        withAttributes: roomLabelAttrs
-                    )
-                }
-            } else {
-                // Einzelraum oder kein Centroid → alles in der Grundriss-Mitte
-                var lines: [String] = []
-                let dimStr = String(format: "(%.2f × %.2f m)", worldW, worldH)
-                    .replacingOccurrences(of: ".", with: ",")
-                for (i, name) in names.enumerated() {
-                    let areaStr = i < areas.count
-                        ? String(format: "%.2f m²", areas[i]).replacingOccurrences(of: ".", with: ",")
-                        : String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
-                    lines.append("\(name)  \(areaStr)  \(dimStr)")
-                }
-                if lines.isEmpty {
-                    let areaStr = String(format: "%.2f m²", floorAreaM2).replacingOccurrences(of: ".", with: ",")
-                    lines.append("\(areaStr)  \(dimStr)")
-                }
-                let roomLabel = lines.joined(separator: "\n")
-                let lw: CGFloat = 200, lh: CGFloat = CGFloat(lines.count) * 16 + 4
-                (roomLabel as NSString).draw(
-                    in: CGRect(x: ox + scaledW/2 - lw/2, y: oy + scaledH/2 - lh/2,
-                               width: lw, height: lh),
-                    withAttributes: roomLabelAttrs
-                )
+        // Manuell gesetzte Beschriftungen (relX/relY relativ zu imageSize oder rect)
+        if let annotations = annotations, !annotations.isEmpty {
+            let annotAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 10),
+                .foregroundColor: UIColor(red: 0, green: 0.45, blue: 0.2, alpha: 1)
+            ]
+            // Koordinatenbasis: entweder volle imageSize (Vorschau) oder drawRect (PDF)
+            let baseW = imageSize.width  > 0 ? imageSize.width  : rect.width
+            let baseH = imageSize.height > 0 ? imageSize.height : rect.height
+            let baseX = imageSize.width  > 0 ? CGFloat(0)       : rect.minX
+            let baseY = imageSize.height > 0 ? CGFloat(0)       : rect.minY
+            for ann in annotations {
+                let ax = baseX + CGFloat(ann.relX) * baseW
+                let ay = baseY + CGFloat(ann.relY) * baseH
+                let sz = (ann.text as NSString).size(withAttributes: annotAttrs)
+                let pad: CGFloat = 3
+                let bgRect = CGRect(x: ax - sz.width/2 - pad, y: ay - sz.height/2 - pad,
+                                    width: sz.width + pad*2, height: sz.height + pad*2)
+                g.saveGState()
+                g.setFillColor(UIColor.white.withAlphaComponent(0.82).cgColor)
+                let pill = UIBezierPath(roundedRect: bgRect, cornerRadius: 3).cgPath
+                g.addPath(pill); g.fillPath()
+                g.restoreGState()
+                (ann.text as NSString).draw(
+                    at: CGPoint(x: ax - sz.width/2, y: ay - sz.height/2),
+                    withAttributes: annotAttrs)
             }
         }
 
@@ -1376,7 +1926,6 @@ struct FloorPlanRenderer {
             let standards = [20, 25, 50, 75, 100, 125, 150, 200, 250, 500]
             let nearestScale = standards.min(by: { abs($0 - Int(scaleRatio.rounded())) < abs($1 - Int(scaleRatio.rounded())) }) ?? Int(scaleRatio.rounded())
             let scaleStr = "M 1:\(nearestScale)"
-            let ssz = (scaleStr as NSString).size(withAttributes: sAttrs)
             (scaleStr as NSString).draw(
                 at: CGPoint(x: bx + totalBarLen + 8, y: by - 2),
                 withAttributes: sAttrs)
@@ -1435,7 +1984,7 @@ struct FloorPlanRenderer {
         wallMeasurements: [WallMeasurement],
         doorMeasurements: [SurfaceMeasurement],
         windowMeasurements: [SurfaceMeasurement],
-        address: ScanAddress?, roomNames: [String]?, floorAreaM2: Double
+        address: ScanAddress?, roomNames: [String]?, roomFloorAreas: [Double]? = nil, floorAreaM2: Double
     ) -> Int {
         let hH = estimatedHeaderH(address: address, roomNames: roomNames, floorAreaM2: floorAreaM2)
         var ty: CGFloat = hH + 14
@@ -1450,6 +1999,14 @@ struct FloorPlanRenderer {
         tnl(20); tnl()
         if wallMeasurements.map(\.height).max() != nil { tnl() }
         tnl(10)
+        // RÄUME
+        if let names = roomNames, !names.isEmpty {
+            ensure(80); tnl(20); tnl(22)
+            names.forEach { _ in ensure(19); tnl(19) }
+            let total = (roomFloorAreas ?? []).reduce(0, +)
+            if total > 0 { ensure(22); tnl(26) }
+            tnl(10)
+        }
         // WÄNDE
         ensure(80); tnl(20)
         if wallMeasurements.isEmpty { tnl() } else { tnl(22); wallMeasurements.forEach { _ in ensure(19); tnl(19) } }
@@ -1464,8 +2021,8 @@ struct FloorPlanRenderer {
         return pages
     }
 
-    /// Zeichnet den KRAFT-Briefkopf auf jeder PDF-Seite.
-    /// Links: Objekt-Infos gestapelt. Rechts: logokraftsystem.png (aspect-fit).
+    /// Zeichnet den ScanIQ-Briefkopf auf jeder PDF-Seite.
+    /// Links: Objekt-Infos gestapelt. Rechts: "ScanIQ – Schadendokumentation" Branding.
     /// Gibt die Höhe des Headers zurück.
     @discardableResult
     static func drawKRAFTHeader(
@@ -1491,18 +2048,23 @@ struct FloorPlanRenderer {
             .foregroundColor: UIColor.black
         ]
 
-        // ─── Rechts: Logo (aspect-fit in 130 × 55) ───
-        let logoAreaW: CGFloat = 130, logoAreaH: CGFloat = 55
-        let logoAreaX = pageW - margin - logoAreaW
-        let logoAreaY: CGFloat = 10
-        if let logo = UIImage(named: "kraft_logo") {
-            let s = logo.size
-            let r = min(logoAreaW / s.width, logoAreaH / s.height)
-            let dw = s.width * r, dh = s.height * r
-            logo.draw(in: CGRect(x: logoAreaX + (logoAreaW - dw) / 2,
-                                 y: logoAreaY + (logoAreaH - dh) / 2,
-                                 width: dw, height: dh))
-        }
+        // ─── Rechts: ScanIQ Branding ───
+        let brandAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 13),
+            .foregroundColor: UIColor(red: 0.04, green: 0.52, blue: 1, alpha: 1)
+        ]
+        let subAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 7.5),
+            .foregroundColor: UIColor(white: 0.5, alpha: 1)
+        ]
+        let brandText = "ScanIQ"
+        let subText = "Schadendokumentation"
+        let brandSize = (brandText as NSString).size(withAttributes: brandAttrs)
+        let subSize   = (subText   as NSString).size(withAttributes: subAttrs)
+        let brandX = pageW - margin - max(brandSize.width, subSize.width)
+        (brandText as NSString).draw(at: CGPoint(x: brandX, y: 12), withAttributes: brandAttrs)
+        (subText   as NSString).draw(at: CGPoint(x: brandX, y: 12 + brandSize.height + 2), withAttributes: subAttrs)
+        let brandBottom = 12 + brandSize.height + 2 + subSize.height + 6
 
         // ─── Links: Objekt-Infos ───
         var y: CGFloat = 10
@@ -1532,12 +2094,8 @@ struct FloorPlanRenderer {
             infoRow(label: "GRUNDFLÄCHE (SCAN)", value: aStr)
         }
 
-        if let names = roomNames?.filter({ !$0.isEmpty }), !names.isEmpty {
-            infoRow(label: "RÄUME", value: names.joined(separator: " · "))
-        }
-
-        // Unterkante: das Größere von Textblock und Logo
-        let contentBottom = max(y, logoAreaY + logoAreaH + 6)
+        // Unterkante: das Größere von Textblock und Branding
+        let contentBottom = max(y, brandBottom)
 
         // Trennlinie (volle Breite, dunkel)
         g.saveGState()
@@ -1567,7 +2125,7 @@ struct FloorPlanRenderer {
         g.strokePath()
         g.restoreGState()
 
-        let company = "Kraft Systemtrocknung GmbH  ·  Mozartweg 2c, 63225 Langen  ·  Tel. 06103 270 54 50  ·  info@kraft-system.de"
+        let company = "Erstellt mit ScanIQ  ·  www.innoviweb.de"
         (company as NSString).draw(at: CGPoint(x: 36, y: y + 2), withAttributes: attrs)
 
         if pageNum > 0 && totalPages > 0 {
