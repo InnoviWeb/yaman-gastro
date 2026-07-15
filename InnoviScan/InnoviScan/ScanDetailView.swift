@@ -544,7 +544,7 @@ struct ScanDetailView: View {
         // Manuelle Wandmaße nur speichern wenn sie vom Original abweichen
         let effM = effectiveWallMeasurements()
         let origM = record.wallMeasurements ?? []
-        let hasManualChanges = zip(effM, origM).contains { abs($0.width - $1.width) > 0.001 }
+        let hasManualChanges = Swift.zip(effM, origM).contains { abs($0.width - $1.width) > 0.001 }
         let manualToSave: [WallMeasurement]? = hasManualChanges ? effM : nil
 
         let updated = ScanRecord(

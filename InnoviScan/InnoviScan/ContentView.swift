@@ -105,6 +105,7 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showScan) {
                 RoomScanView(
                     schadensnummer: schadensnummer,
+                    address: ScanAddress(),
                     isPresented: $showScan
                 ) { success in
                     scanMessage = success ? "Scan gespeichert ✓" : "Fehler beim Speichern."

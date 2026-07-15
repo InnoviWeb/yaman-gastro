@@ -45,6 +45,7 @@ class RoomScanViewController: UIViewController {
     private var cancelButton: UIButton!
 
     private var capturedRooms: [CapturedRoom] = []
+    private var collectedRoomNames: [String] = []
 
     init(schadensnummer: String, address: ScanAddress, onDone: @escaping (Bool) -> Void) {
         self.schadensnummer = schadensnummer
@@ -215,6 +216,26 @@ class RoomScanViewController: UIViewController {
         }
     }
 
+    private func suggestedRoomName(for room: CapturedRoom) -> String {
+        // CapturedRoom.Section.Label → German room type name
+        // Use the section with the most walls as the primary label
+        guard #available(iOS 17, *) else { return "" }
+        let labelCounts = room.sections
+            .reduce(into: [CapturedRoom.Section.Label: Int]()) { dict, section in
+                dict[section.label, default: 0] += 1
+            }
+        guard let dominant = labelCounts.max(by: { $0.value < $1.value })?.key else { return "" }
+        switch dominant {
+        case .livingRoom:  return "Wohnzimmer"
+        case .kitchen:     return "Küche"
+        case .bathroom:    return "Bad"
+        case .bedroom:     return "Schlafzimmer"
+        case .diningRoom:  return "Esszimmer"
+        case .unidentified: return ""
+        @unknown default:  return ""
+        }
+    }
+
     private func updateInstruction(_ text: String) {
         DispatchQueue.main.async {
             UIView.transition(with: self.instructionLabel,
@@ -312,11 +333,47 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
                 let builder = RoomBuilder(options: [.beautifyObjects])
                 let room = try await builder.capturedRoom(from: data)
                 print("[DIAG] RoomBuilder erfolgreich. Wände: \(room.walls.count), Türen: \(room.doors.count), Objekte: \(room.objects.count)")
+                let area = wallsAreaAndCentroid(room.walls).area
+                let suggested = suggestedRoomName(for: room)
+                let roomNum = roomCounter   // capture before async dispatch
                 await MainActor.run {
                     self.capturedRooms.append(room)
                     print("[DIAG] capturedRooms.count nach append: \(self.capturedRooms.count)")
                     self.loadingOverlay.isHidden = true
-                    self.runStructureBuilder()
+
+                    // Show per-room naming sheet
+                    let sheet = UIHostingController(rootView: RoomNameSheet(
+                        roomNumber: roomNum,
+                        suggestedName: suggested,
+                        areaM2: area,
+                        onNextRoom: { [weak self] name in
+                            guard let self else { return }
+                            self.collectedRoomNames.append(name)
+                            self.dismiss(animated: true) {
+                                self.roomCounter += 1
+                                self.updateRoomCounter()
+                                self.isProcessing = false  // allow next didEndWith
+                                self.stopButton.isEnabled = true
+                                self.cancelButton.isEnabled = true
+                                self.roomCaptureView.captureSession.run(
+                                    configuration: RoomCaptureSession.Configuration()
+                                )
+                            }
+                        },
+                        onAllDone: { [weak self] name in
+                            guard let self else { return }
+                            self.collectedRoomNames.append(name)
+                            self.dismiss(animated: true) {
+                                self.runStructureBuilder()
+                            }
+                        }
+                    ))
+                    sheet.modalPresentationStyle = .pageSheet
+                    if let sheet2 = sheet.sheetPresentationController {
+                        sheet2.detents = [.medium()]
+                        sheet2.prefersGrabberVisible = false
+                    }
+                    self.present(sheet, animated: true)
                 }
             } catch {
                 print("[DIAG] RoomBuilder FEHLER: \(error)")
@@ -352,6 +409,7 @@ private extension RoomScanViewController {
         previewWindows: [OpeningGeometry2D] = [],
         previewCentroids: [ScanCentroid] = [],
         previewAreas: [Double] = [],
+        presetNames: [String] = [],
         onConfirm: @escaping ([String]) -> Void
     ) {
         let view = RoomNamingView(
@@ -360,7 +418,8 @@ private extension RoomScanViewController {
             previewDoors: previewDoors,
             previewWindows: previewWindows,
             previewCentroids: previewCentroids,
-            roomAreas: previewAreas
+            roomAreas: previewAreas,
+            presetNames: presetNames
         ) { [weak self] names in
             self?.dismiss(animated: true) { onConfirm(names) }
         }
@@ -409,7 +468,8 @@ private extension RoomScanViewController {
                         previewDoors: prevDoors,
                         previewWindows: prevWindows,
                         previewCentroids: prevCentroids,
-                        previewAreas: prevAreas
+                        previewAreas: prevAreas,
+                        presetNames: self.collectedRoomNames
                     ) { [weak self] names in
                         guard let self else { return }
                         self.loadingLabel.text = "Daten werden gespeichert…"
@@ -460,7 +520,8 @@ private extension RoomScanViewController {
                         previewDoors: fbDoors,
                         previewWindows: fbWindows,
                         previewCentroids: fbCentroid,
-                        previewAreas: fbAreas
+                        previewAreas: fbAreas,
+                        presetNames: self.collectedRoomNames
                     ) { [weak self] names in
                         guard let self else { return }
                         self.loadingLabel.text = "Daten werden gespeichert…"
@@ -621,12 +682,10 @@ private extension RoomScanViewController {
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
-            photoComments: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
             manualWallMeasurements: nil,
-            roomCentroids: roomCentroids,
-            floorPlanAnnotations: nil
+            roomCentroids: roomCentroids
         )
     }
 
@@ -768,12 +827,10 @@ private extension RoomScanViewController {
             roomNames: resolvedNames,
             roomFloorAreas: roomFloorAreas,
             roomPhotos: nil,
-            photoComments: nil,
             moistureMeasurements: nil,
             objectGeometry: objectGeos,
             manualWallMeasurements: nil,
-            roomCentroids: roomCentroids,
-            floorPlanAnnotations: nil
+            roomCentroids: roomCentroids
         )
     }
 
@@ -927,6 +984,7 @@ struct RoomNamingView: View {
     let previewWindows: [OpeningGeometry2D]
     let previewCentroids: [ScanCentroid]
     let roomAreas: [Double]
+    let presetNames: [String]
     @State private var names: [String]
     @State private var previewImage: UIImage?
     let onConfirm: ([String]) -> Void
@@ -941,14 +999,18 @@ struct RoomNamingView: View {
          previewWindows: [OpeningGeometry2D] = [],
          previewCentroids: [ScanCentroid] = [],
          roomAreas: [Double] = [],
+         presetNames: [String] = [],
          onConfirm: @escaping ([String]) -> Void) {
-        self.roomCount = roomCount
-        self.previewWalls = previewWalls
-        self.previewDoors = previewDoors
-        self.previewWindows = previewWindows
+        self.roomCount        = roomCount
+        self.previewWalls     = previewWalls
+        self.previewDoors     = previewDoors
+        self.previewWindows   = previewWindows
         self.previewCentroids = previewCentroids
-        self.roomAreas = roomAreas
-        self._names = State(initialValue: (1...max(1, roomCount)).map { "Raum \($0)" })
+        self.roomAreas        = roomAreas
+        self.presetNames      = presetNames
+        self._names = State(initialValue: (0..<max(1, roomCount)).map { i in
+            i < presetNames.count && !presetNames[i].isEmpty ? presetNames[i] : "Raum \(i + 1)"
+        })
         self.onConfirm = onConfirm
     }
 
@@ -1074,6 +1136,15 @@ private func objectLabel(for category: CapturedRoom.Object.Category) -> String {
     case .fireplace:    return "Kamin"
     @unknown default:   return "Obj."
     }
+}
+
+// MARK: - FloorPlanAnnotation
+
+struct FloorPlanAnnotation {
+    /// Relative position within the floor plan image (0…1)
+    var relX: Double
+    var relY: Double
+    var text: String
 }
 
 // MARK: - FloorPlanRenderer
