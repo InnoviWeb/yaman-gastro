@@ -286,6 +286,7 @@ class RoomScanViewController: UIViewController {
     @objc private func cancelScan() {
         stopButton.isEnabled = false
         cancelButton.isEnabled = false
+        isProcessing = true   // suppress async didEndWith after cancel
         roomCaptureView.captureSession.stop()
         onDone(false)
     }
@@ -322,6 +323,7 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
         isProcessing = true
 
         if let error = error {
+            isProcessing = false
             DispatchQueue.main.async { self.showError(error.localizedDescription) }
             return
         }
@@ -335,13 +337,17 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
             do {
                 let builder = RoomBuilder(options: [.beautifyObjects])
                 let room = try await builder.capturedRoom(from: data)
+                #if DEBUG
                 print("[DIAG] RoomBuilder erfolgreich. Wände: \(room.walls.count), Türen: \(room.doors.count), Objekte: \(room.objects.count)")
+                #endif
                 let area = wallsAreaAndCentroid(room.walls).area
                 let suggested = suggestedRoomName(for: room)
                 let roomNum = roomCounter   // capture before async dispatch
                 await MainActor.run {
                     self.capturedRooms.append(room)
+                    #if DEBUG
                     print("[DIAG] capturedRooms.count nach append: \(self.capturedRooms.count)")
+                    #endif
                     self.loadingOverlay.isHidden = true
 
                     // Show per-room naming sheet
@@ -379,8 +385,11 @@ extension RoomScanViewController: RoomCaptureSessionDelegate {
                     self.present(sheet, animated: true)
                 }
             } catch {
+                #if DEBUG
                 print("[DIAG] RoomBuilder FEHLER: \(error)")
+                #endif
                 await MainActor.run {
+                    self.isProcessing = false
                     self.loadingOverlay.isHidden = true
                     self.showError(error.localizedDescription)
                 }
@@ -438,10 +447,14 @@ private extension RoomScanViewController {
 
         Task {
             do {
+                #if DEBUG
                 print("[DIAG] StructureBuilder startet mit \(capturedRooms.count) CapturedRoom(s)")
+                #endif
                 let builder = StructureBuilder(options: [.beautifyObjects])
                 let structure = try await builder.capturedStructure(from: capturedRooms)
+                #if DEBUG
                 print("[DIAG] StructureBuilder erfolgreich. structure.rooms.count = \(structure.rooms.count), Wände: \(structure.walls.count), Türen: \(structure.doors.count)")
+                #endif
 
                 // Geometrie für Grundriss-Vorschau im Benennungs-Screen vorberechnen
                 func geoW(_ t: simd_float4x4, _ d: Float) -> WallGeometry2D {
@@ -492,10 +505,14 @@ private extension RoomScanViewController {
                 }
             } catch {
                 // StructureBuilder fehlgeschlagen — Fallback mit Einzelräumen
+                #if DEBUG
                 print("[DIAG] StructureBuilder FEHLER → Fallback wird genutzt. Fehler: \(error)")
+                #endif
                 // Vorschau aus dem ersten Raum (Fallback = lokale Koordinaten, nur 1 Raum zeigbar)
                 let roomCount = self.capturedRooms.count
+                #if DEBUG
                 print("[DIAG] Fallback: roomCount = \(roomCount)")
+                #endif
                 let fbFirst = self.capturedRooms.first
                 func fbGeoW(_ t: simd_float4x4, _ d: Float) -> WallGeometry2D {
                     let dx = Double(t.columns.0.x), dz = Double(t.columns.0.z)
@@ -870,8 +887,8 @@ private extension RoomScanViewController {
 
     func showError(_ message: String) {
         let alert = UIAlertController(title: "Fehler", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
-            self.onDone(false)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.onDone(false)
         })
         present(alert, animated: true)
     }
