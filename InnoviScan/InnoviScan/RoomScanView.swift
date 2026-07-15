@@ -75,6 +75,7 @@ class RoomScanViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         roomCaptureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        showHintIfNeeded()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -83,6 +84,56 @@ class RoomScanViewController: UIViewController {
     }
 
     // MARK: - UI Setup
+
+    private func showHintIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: "multiRoomHintShown") else { return }
+        UserDefaults.standard.set(true, forKey: "multiRoomHintShown")
+
+        let overlay = UIView()
+        overlay.backgroundColor = UIColor.black.withAlphaComponent(0.82)
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: view.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        let label = UILabel()
+        label.text = "Scanne jeden Raum einzeln.\n\nHalte das iPhone beim Wechsel zwischen den Räumen weiter hoch, damit die Räume korrekt zusammengesetzt werden."
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 16, weight: .regular)
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let btn = UIButton(type: .system)
+        btn.setTitle("Verstanden", for: .normal)
+        btn.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        btn.backgroundColor = .systemBlue
+        btn.setTitleColor(.white, for: .normal)
+        btn.layer.cornerRadius = 12
+        btn.translatesAutoresizingMaskIntoConstraints = false
+
+        overlay.addSubview(label)
+        overlay.addSubview(btn)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: -40),
+            label.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 32),
+            label.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -32),
+            btn.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            btn.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 32),
+            btn.widthAnchor.constraint(equalToConstant: 160),
+            btn.heightAnchor.constraint(equalToConstant: 48),
+        ])
+
+        let dismiss: () -> Void = { [weak overlay] in
+            UIView.animate(withDuration: 0.25) { overlay?.alpha = 0 } completion: { _ in overlay?.removeFromSuperview() }
+        }
+        btn.addAction(UIAction { _ in dismiss() }, for: .touchUpInside)
+    }
 
     private func setupStopButton() {
         // Primary: "Raum fertig"
