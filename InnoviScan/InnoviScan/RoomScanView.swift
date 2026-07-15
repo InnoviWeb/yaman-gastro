@@ -279,10 +279,13 @@ class RoomScanViewController: UIViewController {
 
     @objc private func roomDone() {
         stopButton.isEnabled = false
+        cancelButton.isEnabled = false
         roomCaptureView.captureSession.stop()
     }
 
     @objc private func cancelScan() {
+        stopButton.isEnabled = false
+        cancelButton.isEnabled = false
         roomCaptureView.captureSession.stop()
         onDone(false)
     }
